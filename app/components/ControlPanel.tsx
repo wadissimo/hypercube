@@ -49,7 +49,7 @@ export default function ControlPanel({ onTwist, disabled }: Props) {
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 12,
-    paddingBottom: 24,
+    paddingBottom: 16,
     paddingTop: 8,
     gap: 8,
   },

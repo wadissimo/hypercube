@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, StyleSheet, useWindowDimensions, Pressable, Text } from 'react-native';
 import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import CubeCanvas from './components/CubeCanvas';
 import ControlPanel from './components/ControlPanel';
 import type { CubeState, Face } from './utils/cubeModel';
@@ -9,14 +10,13 @@ import { ALL_FACES, createSolvedCube, twistFace } from './utils/cubeModel';
 import { usePanRotation } from './hooks/usePanRotation';
 import { useTwistAnimation } from './hooks/useTwistAnimation';
 
-const CONTROL_PANEL_HEIGHT = 120;
-const TOP_BAR_HEIGHT = 64;
 const SCRAMBLE_MOVES = 20;
 
 export default function Index() {
-  const { width, height } = useWindowDimensions();
+  const { width } = useWindowDimensions();
   const [cubeState, setCubeState] = useState(createSolvedCube);
   const [scrambleText, setScrambleText] = useState('');
+  const [canvasHeight, setCanvasHeight] = useState(0);
   const { viewMatrix, zoom, gesture } = usePanRotation();
   const { twistAnim, twist } = useTwistAnimation(setCubeState);
   const disabled = !!twistAnim;
@@ -36,41 +36,46 @@ export default function Index() {
 
   return (
     <GestureHandlerRootView style={styles.root}>
-      <View style={styles.topBar}>
-        <ActionButton
-          icon="refresh"
-          label="Reset"
-          onPress={handleReset}
-          disabled={disabled}
-        />
-        <Text
-          style={styles.scrambleText}
-          numberOfLines={2}
-          adjustsFontSizeToFit
-          minimumFontScale={0.7}
-        >
-          {scrambleText}
-        </Text>
-        <ActionButton
-          icon="shuffle"
-          label="Scramble"
-          onPress={handleScramble}
-          disabled={disabled}
-        />
-      </View>
-      <GestureDetector gesture={gesture}>
-        <View style={styles.canvas}>
-          <CubeCanvas
-            cubeState={cubeState}
-            viewMatrix={viewMatrix}
-            zoom={zoom}
-            twistAnim={twistAnim}
-            width={width}
-            height={height - CONTROL_PANEL_HEIGHT - TOP_BAR_HEIGHT}
+      <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
+        <View style={styles.topBar}>
+          <ActionButton
+            icon="refresh"
+            label="Reset"
+            onPress={handleReset}
+            disabled={disabled}
+          />
+          <Text
+            style={styles.scrambleText}
+            numberOfLines={2}
+            adjustsFontSizeToFit
+            minimumFontScale={0.7}
+          >
+            {scrambleText}
+          </Text>
+          <ActionButton
+            icon="shuffle"
+            label="Scramble"
+            onPress={handleScramble}
+            disabled={disabled}
           />
         </View>
-      </GestureDetector>
-      <ControlPanel onTwist={twist} disabled={disabled} />
+        <GestureDetector gesture={gesture}>
+          <View
+            style={styles.canvas}
+            onLayout={e => setCanvasHeight(e.nativeEvent.layout.height)}
+          >
+            <CubeCanvas
+              cubeState={cubeState}
+              viewMatrix={viewMatrix}
+              zoom={zoom}
+              twistAnim={twistAnim}
+              width={width}
+              height={canvasHeight}
+            />
+          </View>
+        </GestureDetector>
+        <ControlPanel onTwist={twist} disabled={disabled} />
+      </SafeAreaView>
     </GestureHandlerRootView>
   );
 }
@@ -160,12 +165,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#1a1a2e',
   },
+  safeArea: {
+    flex: 1,
+  },
   topBar: {
-    height: TOP_BAR_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
     paddingTop: 14,
+    paddingBottom: 14,
     gap: 12,
   },
   actionButton: {
