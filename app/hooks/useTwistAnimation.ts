@@ -14,7 +14,7 @@ export function useTwistAnimation(
   const [twistAnim, setTwistAnim] = useState<TwistAnimState | null>(null);
   const animRef = useRef<number | null>(null);
 
-  const twist = useCallback((face: Face, clockwise: boolean) => {
+  const twist = useCallback((face: Face, clockwise: boolean, layers: number[]) => {
     if (animRef.current) return;
 
     const startTime = Date.now();
@@ -24,16 +24,16 @@ export function useTwistAnimation(
       const angle = easeOutCubic(progress) * (Math.PI / 2);
 
       if (progress < 1) {
-        setTwistAnim({ face, clockwise, angle });
+        setTwistAnim({ face, clockwise, angle, layers });
         animRef.current = requestAnimationFrame(tick);
       } else {
         setTwistAnim(null);
-        setCubeState(prev => twistFace(prev, face, clockwise));
+        setCubeState(prev => twistFace(prev, face, clockwise, layers));
         animRef.current = null;
       }
     };
 
-    setTwistAnim({ face, clockwise, angle: 0 });
+    setTwistAnim({ face, clockwise, angle: 0, layers });
     animRef.current = requestAnimationFrame(tick);
   }, [setCubeState]);
 

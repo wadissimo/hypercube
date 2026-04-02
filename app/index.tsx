@@ -4,39 +4,80 @@ import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-ha
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CubeCanvas from './components/CubeCanvas';
-import ControlPanel from './components/ControlPanel';
-import type { CubeState, Face } from './utils/cubeModel';
-import { ALL_FACES, createSolvedCube, twistFace } from './utils/cubeModel';
-import { usePanRotation } from './hooks/usePanRotation';
+import type { Axis, CubeSize, CubeState, Face } from './utils/cubeModel';
+import {
+  ALL_FACES,
+  SUPPORTED_CUBE_SIZES,
+  createSolvedCube,
+  twistFace,
+  faceAxis,
+  faceLayers,
+} from './utils/cubeModel';
+import { useCubeGesture } from './hooks/useCubeGesture';
 import { useTwistAnimation } from './hooks/useTwistAnimation';
 
 const SCRAMBLE_MOVES = 20;
 
 export default function Index() {
   const { width } = useWindowDimensions();
-  const [cubeState, setCubeState] = useState(createSolvedCube);
+  const [cubeSize, setCubeSize] = useState<CubeSize>(3);
+  const [cubeState, setCubeState] = useState(() => createSolvedCube(3));
   const [scrambleText, setScrambleText] = useState('');
   const [canvasHeight, setCanvasHeight] = useState(0);
-  const { viewMatrix, zoom, gesture } = usePanRotation();
   const { twistAnim, twist } = useTwistAnimation(setCubeState);
   const disabled = !!twistAnim;
+  const { viewMatrix, zoom, gesture } = useCubeGesture({
+    cubeState, cubeSize, width, height: canvasHeight,
+    onTwist: twist, disabled,
+  });
+
+  const handleSizeChange = (size: CubeSize) => {
+    if (disabled || size === cubeSize) return;
+    setCubeSize(size);
+    setCubeState(createSolvedCube(size));
+    setScrambleText('');
+  };
 
   const handleReset = () => {
     if (disabled) return;
-    setCubeState(createSolvedCube());
+    setCubeState(createSolvedCube(cubeSize));
     setScrambleText('');
   };
 
   const handleScramble = () => {
     if (disabled) return;
-    const scramble = createScramble(SCRAMBLE_MOVES);
-    setCubeState(applyMoves(createSolvedCube(), scramble.moves));
+    const scramble = createScramble(SCRAMBLE_MOVES, cubeSize);
+    setCubeState(applyMoves(createSolvedCube(cubeSize), scramble.moves));
     setScrambleText(scramble.notation);
   };
 
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
+        <View style={styles.modeBar}>
+          {SUPPORTED_CUBE_SIZES.map((size, i) => (
+            <Pressable
+              key={size}
+              style={[
+                styles.modeButton,
+                size === cubeSize && styles.modeButtonActive,
+                i === 0 && styles.modeButtonFirst,
+                i === SUPPORTED_CUBE_SIZES.length - 1 && styles.modeButtonLast,
+              ]}
+              onPress={() => handleSizeChange(size)}
+              disabled={disabled}
+            >
+              <Text
+                style={[
+                  styles.modeButtonText,
+                  size === cubeSize && styles.modeButtonTextActive,
+                ]}
+              >
+                {size}x{size}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
         <View style={styles.topBar}>
           <ActionButton
             icon="refresh"
@@ -66,6 +107,7 @@ export default function Index() {
           >
             <CubeCanvas
               cubeState={cubeState}
+              cubeSize={cubeSize}
               viewMatrix={viewMatrix}
               zoom={zoom}
               twistAnim={twistAnim}
@@ -74,7 +116,6 @@ export default function Index() {
             />
           </View>
         </GestureDetector>
-        <ControlPanel onTwist={twist} disabled={disabled} />
       </SafeAreaView>
     </GestureHandlerRootView>
   );
@@ -107,8 +148,8 @@ function ActionButton({ icon, label, onPress, disabled }: ActionButtonProps) {
 
 function applyMoves(state: CubeState, moves: Move[]): CubeState {
   let next = state;
-  for (const { face, clockwise } of moves) {
-    next = twistFace(next, face, clockwise);
+  for (const { face, clockwise, layers } of moves) {
+    next = twistFace(next, face, clockwise, layers);
   }
   return next;
 }
@@ -116,12 +157,13 @@ function applyMoves(state: CubeState, moves: Move[]): CubeState {
 interface Move {
   face: Face;
   clockwise: boolean;
+  layers: number[];
 }
 
-function createScramble(length: number): { moves: Move[]; notation: string } {
+function createScramble(length: number, size: CubeSize): { moves: Move[]; notation: string } {
   const moves: Move[] = [];
   let previousFace: Face | null = null;
-  let previousAxis: string | null = null;
+  let previousAxis: Axis | null = null;
 
   while (moves.length < length) {
     const face = ALL_FACES[Math.floor(Math.random() * ALL_FACES.length)];
@@ -131,33 +173,23 @@ function createScramble(length: number): { moves: Move[]; notation: string } {
     }
 
     const clockwise = Math.random() >= 0.5;
-    moves.push({ face, clockwise });
+    const wide = size >= 4 && Math.random() < 0.3;
+    const layers = faceLayers(face, size, wide);
+    moves.push({ face, clockwise, layers });
     previousFace = face;
     previousAxis = axis;
   }
 
   return {
     moves,
-    notation: moves.map(formatMove).join(' '),
+    notation: moves.map(m => formatMove(m, size)).join(' '),
   };
 }
 
-function faceAxis(face: Face): string {
-  switch (face) {
-    case 'U':
-    case 'D':
-      return 'y';
-    case 'L':
-    case 'R':
-      return 'x';
-    case 'F':
-    case 'B':
-      return 'z';
-  }
-}
-
-function formatMove({ face, clockwise }: Move): string {
-  return clockwise ? face : `${face}'`;
+function formatMove({ face, clockwise, layers }: Move, size: CubeSize): string {
+  const isWide = size >= 4 && layers.length > 1;
+  const name = isWide ? `${face}w` : face;
+  return clockwise ? name : `${name}'`;
 }
 
 const styles = StyleSheet.create({
@@ -168,12 +200,46 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
   },
+  modeBar: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    gap: 0,
+  },
+  modeButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    backgroundColor: 'transparent',
+  },
+  modeButtonActive: {
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
+  modeButtonFirst: {
+    borderTopLeftRadius: 8,
+    borderBottomLeftRadius: 8,
+  },
+  modeButtonLast: {
+    borderTopRightRadius: 8,
+    borderBottomRightRadius: 8,
+  },
+  modeButtonText: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modeButtonTextActive: {
+    color: '#f5f7ff',
+  },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingTop: 14,
-    paddingBottom: 14,
+    paddingTop: 10,
+    paddingBottom: 10,
     gap: 12,
   },
   actionButton: {

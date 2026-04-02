@@ -1,19 +1,19 @@
 import React from 'react';
 import { View, TouchableOpacity, Text, StyleSheet } from 'react-native';
-import type { Face } from '../utils/cubeModel';
+import type { Face, CubeSize } from '../utils/cubeModel';
 import { ALL_FACES, FACE_COLORS } from '../utils/cubeModel';
 
 interface Props {
-  onTwist: (face: Face, clockwise: boolean) => void;
+  onTwist: (face: Face, clockwise: boolean, wide?: boolean) => void;
   disabled: boolean;
+  cubeSize: CubeSize;
 }
 
 function textColor(bg: string): string {
-  // White and yellow need dark text
   return bg === '#FFFFFF' || bg === '#FFD500' ? '#000' : '#FFF';
 }
 
-export default function ControlPanel({ onTwist, disabled }: Props) {
+export default function ControlPanel({ onTwist, disabled, cubeSize }: Props) {
   return (
     <View style={styles.container}>
       <View style={styles.row}>
@@ -42,6 +42,36 @@ export default function ControlPanel({ onTwist, disabled }: Props) {
           </TouchableOpacity>
         ))}
       </View>
+      {cubeSize >= 4 && (
+        <>
+          <View style={styles.row}>
+            {ALL_FACES.map(face => (
+              <TouchableOpacity
+                key={`${face}-w-cw`}
+                style={[styles.button, styles.wideButton, { borderColor: FACE_COLORS[face] }, disabled && styles.disabled]}
+                onPress={() => onTwist(face, true, true)}
+                disabled={disabled}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.label, { color: FACE_COLORS[face] }]}>{face}w</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <View style={styles.row}>
+            {ALL_FACES.map(face => (
+              <TouchableOpacity
+                key={`${face}-w-ccw`}
+                style={[styles.button, styles.wideButton, { borderColor: FACE_COLORS[face] }, disabled && styles.disabled]}
+                onPress={() => onTwist(face, false, true)}
+                disabled={disabled}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.label, { color: FACE_COLORS[face] }]}>{face}w&apos;</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </>
+      )}
     </View>
   );
 }
@@ -67,6 +97,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#333',
+  },
+  wideButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 2,
   },
   disabled: {
     opacity: 0.5,
