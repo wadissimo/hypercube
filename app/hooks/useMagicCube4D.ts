@@ -20,10 +20,12 @@ export function useMagicCube4D() {
   const [sliceMask, setSliceMask] = useState(MAGICCUBE4D_DEFAULT_SLICE_MASK);
   const [twistAnimation, setTwistAnimation] = useState<MagicCube4DTwistAnimation | null>(null);
   const [baseView, setBaseView] = useState<Mat4>(MAGICCUBE4D_INITIAL_VIEW);
+  const [canUndo, setCanUndo] = useState(false);
 
   const stateRef = useRef(state);
   const twistFrameRef = useRef<number | null>(null);
   const viewFrameRef = useRef<number | null>(null);
+  const historyRef = useRef<number[][]>([]);
 
   stateRef.current = state;
 
@@ -44,6 +46,8 @@ export function useMagicCube4D() {
     if (twistFrameRef.current) {
       return;
     }
+    historyRef.current = [];
+    setCanUndo(false);
     setState(createSolvedMagicCube4DState());
   }, []);
 
@@ -51,7 +55,23 @@ export function useMagicCube4D() {
     if (twistFrameRef.current) {
       return;
     }
+    historyRef.current = [];
+    setCanUndo(false);
     setState(buildScrambledMagicCube4DState(length));
+  }, []);
+
+  const undo = useCallback(() => {
+    if (twistFrameRef.current || viewFrameRef.current) {
+      return;
+    }
+
+    const previous = historyRef.current.pop();
+    if (!previous) {
+      return;
+    }
+
+    setState(previous);
+    setCanUndo(historyRef.current.length > 0);
   }, []);
 
   const rotateFaceToCenter = useCallback((stickerIndex: number | null) => {
@@ -107,7 +127,11 @@ export function useMagicCube4D() {
       if (progress < 1) {
         twistFrameRef.current = requestAnimationFrame(tick);
       } else {
-        setState(prev => applyTwistToState(prev, gripIndex, dir, sliceMask));
+        setState(prev => {
+          historyRef.current.push(prev);
+          setCanUndo(true);
+          return applyTwistToState(prev, gripIndex, dir, sliceMask);
+        });
         setTwistAnimation(null);
         twistFrameRef.current = null;
       }
@@ -128,9 +152,11 @@ export function useMagicCube4D() {
     setSliceMask,
     rotation4d,
     twistAnimation,
+    canUndo,
     isAnimating: !!twistAnimation || !!viewFrameRef.current,
     reset,
     scramble,
+    undo,
     twistSticker,
     rotateFaceToCenter,
   };

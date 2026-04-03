@@ -10,6 +10,7 @@ function easeOutCubic(t: number): number {
 
 export function useTwistAnimation(
   setCubeState: React.Dispatch<React.SetStateAction<CubeState>>,
+  onTwistComplete?: (previousState: CubeState, nextState: CubeState) => void,
 ) {
   const [twistAnim, setTwistAnim] = useState<TwistAnimState | null>(null);
   const animRef = useRef<number | null>(null);
@@ -28,14 +29,18 @@ export function useTwistAnimation(
         animRef.current = requestAnimationFrame(tick);
       } else {
         setTwistAnim(null);
-        setCubeState(prev => twistFace(prev, face, clockwise, layers));
+        setCubeState(prev => {
+          const next = twistFace(prev, face, clockwise, layers);
+          onTwistComplete?.(prev, next);
+          return next;
+        });
         animRef.current = null;
       }
     };
 
     setTwistAnim({ face, clockwise, angle: 0, layers });
     animRef.current = requestAnimationFrame(tick);
-  }, [setCubeState]);
+  }, [onTwistComplete, setCubeState]);
 
   return { twistAnim, twist };
 }

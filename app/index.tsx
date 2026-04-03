@@ -28,18 +28,25 @@ export default function Index() {
   const [mode, setMode] = useState<ScreenMode>('cube');
   const [cubeSize, setCubeSize] = useState<CubeSize>(3);
   const [cubeState, setCubeState] = useState(() => createSolvedCube(3));
+  const [cubeCanUndo, setCubeCanUndo] = useState(false);
   const [scrambleText, setScrambleText] = useState('');
   const [canvasHeight, setCanvasHeight] = useState(0);
-  const { twistAnim, twist } = useTwistAnimation(setCubeState);
+  const cubeHistoryRef = useRef<CubeState[]>([]);
+  const { twistAnim, twist } = useTwistAnimation(setCubeState, previousState => {
+    cubeHistoryRef.current.push(previousState);
+    setCubeCanUndo(true);
+  });
   const {
     state: magicCube4DState,
     sliceMask,
     setSliceMask,
     rotation4d,
     twistAnimation: magicCube4DTwistAnimation,
+    canUndo: magicCube4DCanUndo,
     isAnimating: magicCube4DAnimating,
     reset: resetMagicCube4D,
     scramble: scrambleMagicCube4D,
+    undo: undoMagicCube4D,
     twistSticker,
     rotateFaceToCenter,
   } = useMagicCube4D();
@@ -74,6 +81,8 @@ export default function Index() {
     if (size === cubeSize) return;
     setCubeSize(size);
     setCubeState(createSolvedCube(size));
+    cubeHistoryRef.current = [];
+    setCubeCanUndo(false);
     setScrambleText('');
   };
 
@@ -86,6 +95,8 @@ export default function Index() {
     if (actionDisabled) return;
     if (mode === 'cube') {
       setCubeState(createSolvedCube(cubeSize));
+      cubeHistoryRef.current = [];
+      setCubeCanUndo(false);
       setScrambleText('');
       return;
     }
@@ -101,8 +112,27 @@ export default function Index() {
     }
 
     const scramble = createScramble(SCRAMBLE_MOVES, cubeSize);
+    cubeHistoryRef.current = [];
+    setCubeCanUndo(false);
     setCubeState(applyMoves(createSolvedCube(cubeSize), scramble.moves));
     setScrambleText(scramble.notation);
+  };
+
+  const handleUndo = () => {
+    if (mode === 'cube') {
+      if (!!twistAnim) {
+        return;
+      }
+      const previous = cubeHistoryRef.current.pop();
+      if (!previous) {
+        return;
+      }
+      setCubeState(previous);
+      setCubeCanUndo(cubeHistoryRef.current.length > 0);
+      return;
+    }
+
+    undoMagicCube4D();
   };
 
   return (
@@ -150,12 +180,20 @@ export default function Index() {
           </Pressable>
         </View>
         <View style={styles.topBar}>
-          <ActionButton
-            icon="refresh"
-            label="Reset"
-            onPress={handleReset}
-            disabled={actionDisabled}
-          />
+          <View style={styles.actionGroup}>
+            <ActionButton
+              icon="arrow-undo"
+              label="Undo"
+              onPress={handleUndo}
+              disabled={mode === 'cube' ? !cubeCanUndo || !!twistAnim : !magicCube4DCanUndo || magicCube4DAnimating}
+            />
+            <ActionButton
+              icon="refresh"
+              label="Reset"
+              onPress={handleReset}
+              disabled={actionDisabled}
+            />
+          </View>
           <Text
             style={styles.scrambleText}
             numberOfLines={2}
@@ -358,6 +396,10 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 10,
     gap: 12,
+  },
+  actionGroup: {
+    flexDirection: 'row',
+    gap: 10,
   },
   sliceBar: {
     flexDirection: 'row',
