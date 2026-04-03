@@ -1,0 +1,31 @@
+export interface MagicCube4DData {
+  puzzleId: string;
+  nDims: number;
+  nFaces: number;
+  nCubies: number;
+  nStickers: number;
+  nGrips: number;
+  circumRadius: number;
+  inRadius: number;
+  faceShrink: number;
+  stickerShrink: number;
+  eyeW: number;
+  eyeZ: number;
+  sunVec: number[];
+  niceView: number[][];
+  defaultFaceColors: string[];
+  standardStickerVertsAtRest: number[][];
+  stickerInds: number[][][];
+  sticker2Face: number[];
+  sticker2Cubie: number[];
+  face2OppositeFace: number[];
+  grip2Face: number[];
+  gripSymmetryOrders: number[];
+  gripCenters: number[][];
+  gripDims: number[];
+  gripUsefulMats: number[][][];
+  faceInwardNormals: number[][];
+  faceCutOffsets: number[][];
+  faceCenters: number[][];
+  stickerCenters: number[][];
+}

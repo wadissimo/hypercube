@@ -1,0 +1,137 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  applyTwistToState,
+  buildScrambledMagicCube4DState,
+  createRotateFaceToCenterMatrix,
+  createSolvedMagicCube4DState,
+  getStickerFaceIndex,
+  getStickerGripIndex,
+  MAGICCUBE4D_DEFAULT_SLICE_MASK,
+  MAGICCUBE4D_INITIAL_VIEW,
+  type MagicCube4DTwistAnimation,
+  type Mat4,
+} from '../utils/magiccube4d';
+
+const TWIST_DURATION_MS = 260;
+const VIEW_ROTATION_DURATION_MS = 240;
+
+export function useMagicCube4D() {
+  const [state, setState] = useState<number[]>(createSolvedMagicCube4DState);
+  const [sliceMask, setSliceMask] = useState(MAGICCUBE4D_DEFAULT_SLICE_MASK);
+  const [twistAnimation, setTwistAnimation] = useState<MagicCube4DTwistAnimation | null>(null);
+  const [baseView, setBaseView] = useState<Mat4>(MAGICCUBE4D_INITIAL_VIEW);
+
+  const stateRef = useRef(state);
+  const twistFrameRef = useRef<number | null>(null);
+  const viewFrameRef = useRef<number | null>(null);
+
+  stateRef.current = state;
+
+  useEffect(() => (
+    () => {
+      if (twistFrameRef.current) {
+        cancelAnimationFrame(twistFrameRef.current);
+      }
+      if (viewFrameRef.current) {
+        cancelAnimationFrame(viewFrameRef.current);
+      }
+    }
+  ), []);
+
+  const rotation4d = useMemo(() => baseView, [baseView]);
+
+  const reset = useCallback(() => {
+    if (twistFrameRef.current) {
+      return;
+    }
+    setState(createSolvedMagicCube4DState());
+  }, []);
+
+  const scramble = useCallback((length = 28) => {
+    if (twistFrameRef.current) {
+      return;
+    }
+    setState(buildScrambledMagicCube4DState(length));
+  }, []);
+
+  const rotateFaceToCenter = useCallback((stickerIndex: number | null) => {
+    if (stickerIndex == null || viewFrameRef.current || twistFrameRef.current) {
+      return;
+    }
+
+    const faceIndex = getStickerFaceIndex(stickerIndex);
+    const startView = baseView;
+    const endView = createRotateFaceToCenterMatrix(startView, faceIndex, 1);
+    if (!endView) {
+      return;
+    }
+
+    const startedAt = Date.now();
+    const tick = () => {
+      const progress = Math.min((Date.now() - startedAt) / VIEW_ROTATION_DURATION_MS, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const nextView = createRotateFaceToCenterMatrix(startView, faceIndex, eased);
+      if (nextView) {
+        setBaseView(nextView);
+      }
+
+      if (progress < 1) {
+        viewFrameRef.current = requestAnimationFrame(tick);
+      } else {
+        setBaseView(endView);
+        viewFrameRef.current = null;
+      }
+    };
+
+    viewFrameRef.current = requestAnimationFrame(tick);
+  }, [baseView]);
+
+  const twistSticker = useCallback((stickerIndex: number | null, dir: 1 | -1) => {
+    if (stickerIndex == null || twistFrameRef.current || viewFrameRef.current) {
+      return;
+    }
+
+    const gripIndex = getStickerGripIndex(stickerIndex);
+    const startedAt = Date.now();
+
+    const tick = () => {
+      const progress = Math.min((Date.now() - startedAt) / TWIST_DURATION_MS, 1);
+      const eased = 0.5 - Math.cos(progress * Math.PI) / 2;
+      setTwistAnimation({
+        gripIndex,
+        dir,
+        sliceMask,
+        progress: eased,
+      });
+
+      if (progress < 1) {
+        twistFrameRef.current = requestAnimationFrame(tick);
+      } else {
+        setState(prev => applyTwistToState(prev, gripIndex, dir, sliceMask));
+        setTwistAnimation(null);
+        twistFrameRef.current = null;
+      }
+    };
+
+    setTwistAnimation({
+      gripIndex,
+      dir,
+      sliceMask,
+      progress: 0,
+    });
+    twistFrameRef.current = requestAnimationFrame(tick);
+  }, [sliceMask]);
+
+  return {
+    state,
+    sliceMask,
+    setSliceMask,
+    rotation4d,
+    twistAnimation,
+    isAnimating: !!twistAnimation || !!viewFrameRef.current,
+    reset,
+    scramble,
+    twistSticker,
+    rotateFaceToCenter,
+  };
+}

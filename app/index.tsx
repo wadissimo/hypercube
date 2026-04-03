@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { View, StyleSheet, useWindowDimensions, Pressable, Text } from 'react-native';
 import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CubeCanvas from './components/CubeCanvas';
+import MagicCube4DCanvas from './components/MagicCube4DCanvas';
 import type { Axis, CubeSize, CubeState, Face } from './utils/cubeModel';
 import {
   ALL_FACES,
@@ -14,38 +15,91 @@ import {
   faceLayers,
 } from './utils/cubeModel';
 import { useCubeGesture } from './hooks/useCubeGesture';
+import { useHypercubeGesture } from './hooks/useHypercubeGesture';
+import { useMagicCube4D } from './hooks/useMagicCube4D';
 import { useTwistAnimation } from './hooks/useTwistAnimation';
+import { MAGICCUBE4D_SLICE_BITS, MAGICCUBE4D_SLICE_LABELS } from './utils/magiccube4d';
 
 const SCRAMBLE_MOVES = 20;
+type ScreenMode = 'cube' | 'hypercube';
 
 export default function Index() {
   const { width } = useWindowDimensions();
+  const [mode, setMode] = useState<ScreenMode>('cube');
   const [cubeSize, setCubeSize] = useState<CubeSize>(3);
   const [cubeState, setCubeState] = useState(() => createSolvedCube(3));
   const [scrambleText, setScrambleText] = useState('');
   const [canvasHeight, setCanvasHeight] = useState(0);
   const { twistAnim, twist } = useTwistAnimation(setCubeState);
-  const disabled = !!twistAnim;
-  const { viewMatrix, zoom, gesture } = useCubeGesture({
+  const {
+    state: magicCube4DState,
+    sliceMask,
+    setSliceMask,
+    rotation4d,
+    twistAnimation: magicCube4DTwistAnimation,
+    isAnimating: magicCube4DAnimating,
+    reset: resetMagicCube4D,
+    scramble: scrambleMagicCube4D,
+    twistSticker,
+    rotateFaceToCenter,
+  } = useMagicCube4D();
+  const magicCube4DPickRef = useRef<(x: number, y: number) => number | null>(() => null);
+  const cubeDisabled = !!twistAnim || mode !== 'cube';
+  const cubeGesture = useCubeGesture({
     cubeState, cubeSize, width, height: canvasHeight,
-    onTwist: twist, disabled,
+    onTwist: twist, disabled: cubeDisabled,
+  });
+  const handleHypercubeDoubleTap = useCallback((point: [number, number]) => {
+    rotateFaceToCenter(magicCube4DPickRef.current(point[0], point[1]));
+  }, [rotateFaceToCenter]);
+  const handleHypercubeTap = useCallback((point: [number, number]) => {
+    twistSticker(magicCube4DPickRef.current(point[0], point[1]), 1);
+  }, [twistSticker]);
+  const handleHypercubeLongTap = useCallback((point: [number, number]) => {
+    twistSticker(magicCube4DPickRef.current(point[0], point[1]), -1);
+  }, [twistSticker]);
+  const previewGesture = useHypercubeGesture({
+    onTap: handleHypercubeTap,
+    onLongTap: handleHypercubeLongTap,
+    onDoubleTap: handleHypercubeDoubleTap,
+    disabled: magicCube4DAnimating,
   });
 
+  const activeGesture = mode === 'cube' ? cubeGesture : previewGesture;
+  const actionDisabled = mode === 'cube' ? !!twistAnim : magicCube4DAnimating;
+
   const handleSizeChange = (size: CubeSize) => {
-    if (disabled || size === cubeSize) return;
+    if (!!twistAnim) return;
+    setMode('cube');
+    if (size === cubeSize) return;
     setCubeSize(size);
     setCubeState(createSolvedCube(size));
     setScrambleText('');
   };
 
+  const handleHypercubeMode = () => {
+    if (!!twistAnim) return;
+    setMode('hypercube');
+  };
+
   const handleReset = () => {
-    if (disabled) return;
-    setCubeState(createSolvedCube(cubeSize));
-    setScrambleText('');
+    if (actionDisabled) return;
+    if (mode === 'cube') {
+      setCubeState(createSolvedCube(cubeSize));
+      setScrambleText('');
+      return;
+    }
+
+    resetMagicCube4D();
   };
 
   const handleScramble = () => {
-    if (disabled) return;
+    if (actionDisabled) return;
+    if (mode === 'hypercube') {
+      scrambleMagicCube4D();
+      return;
+    }
+
     const scramble = createScramble(SCRAMBLE_MOVES, cubeSize);
     setCubeState(applyMoves(createSolvedCube(cubeSize), scramble.moves));
     setScrambleText(scramble.notation);
@@ -60,30 +114,47 @@ export default function Index() {
               key={size}
               style={[
                 styles.modeButton,
-                size === cubeSize && styles.modeButtonActive,
+                mode === 'cube' && size === cubeSize && styles.modeButtonActive,
                 i === 0 && styles.modeButtonFirst,
-                i === SUPPORTED_CUBE_SIZES.length - 1 && styles.modeButtonLast,
               ]}
               onPress={() => handleSizeChange(size)}
-              disabled={disabled}
+              disabled={!!twistAnim}
             >
               <Text
                 style={[
                   styles.modeButtonText,
-                  size === cubeSize && styles.modeButtonTextActive,
+                  mode === 'cube' && size === cubeSize && styles.modeButtonTextActive,
                 ]}
               >
                 {size}x{size}
               </Text>
             </Pressable>
           ))}
+          <Pressable
+            style={[
+              styles.modeButton,
+              styles.modeButtonLast,
+              mode === 'hypercube' && styles.modeButtonActive,
+            ]}
+            onPress={handleHypercubeMode}
+            disabled={!!twistAnim}
+          >
+            <Text
+              style={[
+                styles.modeButtonText,
+                mode === 'hypercube' && styles.modeButtonTextActive,
+              ]}
+            >
+              4D
+            </Text>
+          </Pressable>
         </View>
         <View style={styles.topBar}>
           <ActionButton
             icon="refresh"
             label="Reset"
             onPress={handleReset}
-            disabled={disabled}
+            disabled={actionDisabled}
           />
           <Text
             style={styles.scrambleText}
@@ -91,29 +162,75 @@ export default function Index() {
             adjustsFontSizeToFit
             minimumFontScale={0.7}
           >
-            {scrambleText}
+            {mode === 'cube'
+              ? scrambleText
+              : `Magic Cube 4D  •  tap CCW  •  hold CW  •  slices ${MAGICCUBE4D_SLICE_LABELS[sliceMask]}`}
           </Text>
           <ActionButton
             icon="shuffle"
             label="Scramble"
             onPress={handleScramble}
-            disabled={disabled}
+            disabled={actionDisabled}
           />
         </View>
-        <GestureDetector gesture={gesture}>
+        {mode === 'hypercube' && (
+          <View style={styles.sliceBar}>
+            {MAGICCUBE4D_SLICE_BITS.map(bit => {
+              const active = (sliceMask & bit) !== 0;
+              return (
+                <Pressable
+                  key={bit}
+                  style={[
+                    styles.sliceButton,
+                    active && styles.sliceButtonActive,
+                  ]}
+                  onPress={() => setSliceMask(mask => {
+                    const nextMask = (mask ^ bit) & 0b111;
+                    return nextMask === 0 ? bit : nextMask;
+                  })}
+                  disabled={magicCube4DAnimating}
+                >
+                  <Text style={[
+                    styles.sliceButtonText,
+                    active && styles.sliceButtonTextActive,
+                  ]}
+                  >
+                    Slice {MAGICCUBE4D_SLICE_LABELS[bit]}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+        <GestureDetector gesture={activeGesture.gesture}>
           <View
             style={styles.canvas}
             onLayout={e => setCanvasHeight(e.nativeEvent.layout.height)}
           >
-            <CubeCanvas
-              cubeState={cubeState}
-              cubeSize={cubeSize}
-              viewMatrix={viewMatrix}
-              zoom={zoom}
-              twistAnim={twistAnim}
-              width={width}
-              height={canvasHeight}
-            />
+            {mode === 'cube' ? (
+              <CubeCanvas
+                cubeState={cubeState}
+                cubeSize={cubeSize}
+                viewMatrix={activeGesture.viewMatrix}
+                zoom={activeGesture.zoom}
+                twistAnim={twistAnim}
+                width={width}
+                height={canvasHeight}
+              />
+            ) : (
+              <MagicCube4DCanvas
+                state={magicCube4DState}
+                viewMatrix={activeGesture.viewMatrix}
+                zoom={activeGesture.zoom}
+                width={width}
+                height={canvasHeight}
+                rotation4d={rotation4d}
+                twistAnimation={magicCube4DTwistAnimation}
+                onPickReady={(picker) => {
+                  magicCube4DPickRef.current = picker;
+                }}
+              />
+            )}
           </View>
         </GestureDetector>
       </SafeAreaView>
@@ -241,6 +358,33 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 10,
     gap: 12,
+  },
+  sliceBar: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  sliceButton: {
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+  },
+  sliceButtonActive: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  sliceButtonText: {
+    color: 'rgba(255,255,255,0.65)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  sliceButtonTextActive: {
+    color: '#f5f7ff',
   },
   actionButton: {
     width: 40,
