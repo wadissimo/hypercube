@@ -62,9 +62,11 @@ export const MAGICCUBE4D_SLICE_LABELS: Record<number, string> = {
 };
 export const MAGICCUBE4D_FACE_COLORS = DATA.defaultFaceColors;
 export const MAGICCUBE4D_INITIAL_VIEW = DATA.niceView as Mat4;
+export const MAGICCUBE4D_FACE_LABELS = ['w-', 'z-', 'y-', 'x-', 'x+', 'y+', 'z+', 'w+'] as const;
 
 const numColorsByCubie = buildNumColorsByCubie();
 const vertexToSticker = buildVertexToSticker();
+const faceCenterStickerMap = buildFaceCenterStickerMap();
 const stickerGripMap = DATA.stickerCenters.map((center, stickerIndex) => getClosestGrip(
   center as Vec4,
   DATA.sticker2Face[stickerIndex],
@@ -85,6 +87,10 @@ export function getStickerGripIndex(stickerIndex: number): number {
 
 export function getGripOrder(gripIndex: number): number {
   return DATA.gripSymmetryOrders[gripIndex];
+}
+
+export function getFaceCenterStickerIndex(faceIndex: number): number {
+  return faceCenterStickerMap[faceIndex];
 }
 
 export function getFaceCenter(faceIndex: number): Vec4 {
@@ -420,6 +426,31 @@ function buildVertexToSticker(): number[] {
     }
   }
   return mapping;
+}
+
+function buildFaceCenterStickerMap(): number[] {
+  return DATA.faceCenters.map((faceCenter, faceIndex) => {
+    let bestSticker = -1;
+    let bestDistance = Infinity;
+
+    for (let stickerIndex = 0; stickerIndex < DATA.stickerCenters.length; stickerIndex++) {
+      if (DATA.sticker2Face[stickerIndex] !== faceIndex) {
+        continue;
+      }
+
+      const distance = distanceSquared(DATA.stickerCenters[stickerIndex] as Vec4, faceCenter as Vec4);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestSticker = stickerIndex;
+      }
+    }
+
+    if (bestSticker < 0) {
+      throw new Error(`Missing center sticker for face ${faceIndex}`);
+    }
+
+    return bestSticker;
+  });
 }
 
 function getTwistMatrix(gripIndex: number, dir: 1 | -1, fraction: number): Mat4 {

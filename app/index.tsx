@@ -18,7 +18,14 @@ import { useCubeGesture } from './hooks/useCubeGesture';
 import { useHypercubeGesture } from './hooks/useHypercubeGesture';
 import { useMagicCube4D } from './hooks/useMagicCube4D';
 import { useTwistAnimation } from './hooks/useTwistAnimation';
-import { MAGICCUBE4D_SLICE_BITS, MAGICCUBE4D_SLICE_LABELS } from './utils/magiccube4d';
+import {
+  getFaceCenterStickerIndex,
+  getStickerFaceIndex,
+  MAGICCUBE4D_FACE_COLORS,
+  MAGICCUBE4D_FACE_LABELS,
+  MAGICCUBE4D_SLICE_BITS,
+  MAGICCUBE4D_SLICE_LABELS,
+} from './utils/magiccube4d';
 
 const SCRAMBLE_MOVES = 20;
 type ScreenMode = 'cube' | 'hypercube';
@@ -31,6 +38,7 @@ export default function Index() {
   const [cubeCanUndo, setCubeCanUndo] = useState(false);
   const [scrambleText, setScrambleText] = useState('');
   const [canvasHeight, setCanvasHeight] = useState(0);
+  const [selected4DFace, setSelected4DFace] = useState(4);
   const cubeHistoryRef = useRef<CubeState[]>([]);
   const { twistAnim, twist } = useTwistAnimation(setCubeState, previousState => {
     cubeHistoryRef.current.push(previousState);
@@ -57,13 +65,25 @@ export default function Index() {
     onTwist: twist, disabled: cubeDisabled,
   });
   const handleHypercubeDoubleTap = useCallback((point: [number, number]) => {
-    rotateFaceToCenter(magicCube4DPickRef.current(point[0], point[1]));
+    const stickerIndex = magicCube4DPickRef.current(point[0], point[1]);
+    if (stickerIndex != null) {
+      setSelected4DFace(getStickerFaceIndex(stickerIndex));
+    }
+    rotateFaceToCenter(stickerIndex);
   }, [rotateFaceToCenter]);
   const handleHypercubeTap = useCallback((point: [number, number]) => {
-    twistSticker(magicCube4DPickRef.current(point[0], point[1]), 1);
+    const stickerIndex = magicCube4DPickRef.current(point[0], point[1]);
+    if (stickerIndex != null) {
+      setSelected4DFace(getStickerFaceIndex(stickerIndex));
+    }
+    twistSticker(stickerIndex, 1);
   }, [twistSticker]);
   const handleHypercubeLongTap = useCallback((point: [number, number]) => {
-    twistSticker(magicCube4DPickRef.current(point[0], point[1]), -1);
+    const stickerIndex = magicCube4DPickRef.current(point[0], point[1]);
+    if (stickerIndex != null) {
+      setSelected4DFace(getStickerFaceIndex(stickerIndex));
+    }
+    twistSticker(stickerIndex, -1);
   }, [twistSticker]);
   const previewGesture = useHypercubeGesture({
     onTap: handleHypercubeTap,
@@ -133,6 +153,14 @@ export default function Index() {
     }
 
     undoMagicCube4D();
+  };
+
+  const handle4DControlTwist = (dir: 1 | -1) => {
+    twistSticker(getFaceCenterStickerIndex(selected4DFace), dir);
+  };
+
+  const handle4DControlCenter = () => {
+    rotateFaceToCenter(getFaceCenterStickerIndex(selected4DFace));
   };
 
   return (
@@ -212,33 +240,70 @@ export default function Index() {
           />
         </View>
         {mode === 'hypercube' && (
-          <View style={styles.sliceBar}>
-            {MAGICCUBE4D_SLICE_BITS.map(bit => {
-              const active = (sliceMask & bit) !== 0;
-              return (
-                <Pressable
-                  key={bit}
-                  style={[
-                    styles.sliceButton,
-                    active && styles.sliceButtonActive,
-                  ]}
-                  onPress={() => setSliceMask(mask => {
-                    const nextMask = (mask ^ bit) & 0b111;
-                    return nextMask === 0 ? bit : nextMask;
-                  })}
-                  disabled={magicCube4DAnimating}
-                >
-                  <Text style={[
-                    styles.sliceButtonText,
-                    active && styles.sliceButtonTextActive,
-                  ]}
+          <>
+            <View style={styles.sliceBar}>
+              {MAGICCUBE4D_SLICE_BITS.map(bit => {
+                const active = (sliceMask & bit) !== 0;
+                return (
+                  <Pressable
+                    key={bit}
+                    style={[
+                      styles.sliceButton,
+                      active && styles.sliceButtonActive,
+                    ]}
+                    onPress={() => setSliceMask(mask => {
+                      const nextMask = (mask ^ bit) & 0b111;
+                      return nextMask === 0 ? bit : nextMask;
+                    })}
+                    disabled={magicCube4DAnimating}
                   >
-                    Slice {MAGICCUBE4D_SLICE_LABELS[bit]}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
+                    <Text style={[
+                      styles.sliceButtonText,
+                      active && styles.sliceButtonTextActive,
+                    ]}
+                    >
+                      Slice {MAGICCUBE4D_SLICE_LABELS[bit]}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.bottomControls}>
+              <View style={styles.facePickerRow}>
+                {MAGICCUBE4D_FACE_LABELS.map((label, faceIndex) => (
+                  <Pressable
+                    key={label}
+                    style={[
+                      styles.faceChip,
+                      { backgroundColor: MAGICCUBE4D_FACE_COLORS[faceIndex] },
+                      selected4DFace === faceIndex && styles.faceChipActive,
+                    ]}
+                    onPress={() => setSelected4DFace(faceIndex)}
+                    disabled={magicCube4DAnimating}
+                  >
+                    <Text style={styles.faceChipText}>{label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <View style={styles.bottomActionRow}>
+                <BottomControlButton
+                  label="Center"
+                  onPress={handle4DControlCenter}
+                  disabled={magicCube4DAnimating}
+                />
+                <BottomControlButton
+                  label="CCW"
+                  onPress={() => handle4DControlTwist(1)}
+                  disabled={magicCube4DAnimating}
+                />
+                <BottomControlButton
+                  label="CW"
+                  onPress={() => handle4DControlTwist(-1)}
+                  disabled={magicCube4DAnimating}
+                />
+              </View>
+            </View>
+          </>
         )}
         <GestureDetector gesture={activeGesture.gesture}>
           <View
@@ -297,6 +362,28 @@ function ActionButton({ icon, label, onPress, disabled }: ActionButtonProps) {
       accessibilityLabel={label}
     >
       <Ionicons name={icon} size={18} color="#f5f7ff" />
+    </Pressable>
+  );
+}
+
+interface BottomControlButtonProps {
+  label: string;
+  onPress: () => void;
+  disabled: boolean;
+}
+
+function BottomControlButton({ label, onPress, disabled }: BottomControlButtonProps) {
+  return (
+    <Pressable
+      style={({ pressed }) => [
+        styles.bottomControlButton,
+        disabled && styles.actionButtonDisabled,
+        pressed && !disabled && styles.actionButtonPressed,
+      ]}
+      onPress={onPress}
+      disabled={disabled}
+    >
+      <Text style={styles.bottomControlButtonText}>{label}</Text>
     </Pressable>
   );
 }
@@ -427,6 +514,55 @@ const styles = StyleSheet.create({
   },
   sliceButtonTextActive: {
     color: '#f5f7ff',
+  },
+  bottomControls: {
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+    gap: 10,
+  },
+  facePickerRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  faceChip: {
+    minWidth: 48,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    alignItems: 'center',
+  },
+  faceChipActive: {
+    borderColor: '#f5f7ff',
+  },
+  faceChipText: {
+    color: '#111111',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  bottomActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  bottomControlButton: {
+    minWidth: 88,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+  },
+  bottomControlButtonText: {
+    color: '#f5f7ff',
+    fontSize: 14,
+    fontWeight: '700',
   },
   actionButton: {
     width: 40,
