@@ -1,13 +1,15 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { GLView, type ExpoWebGLRenderingContext } from 'expo-gl';
 import { Renderer } from 'expo-three';
 import * as THREE from 'three';
 import type { Mat3 } from '../utils/math3d';
 import {
   buildMagicCube4DFrame,
+  type MagicCube4DPickInfo,
   type MagicCube4DTwistAnimation,
   type Mat4,
 } from '../utils/magiccube4d';
+import type { MagicCube4DSettings } from '../utils/magiccube4dSettings';
 
 interface Props {
   state: number[];
@@ -17,7 +19,8 @@ interface Props {
   height: number;
   rotation4d: Mat4;
   twistAnimation: MagicCube4DTwistAnimation | null;
-  onPickReady?: (picker: (x: number, y: number) => number | null) => void;
+  settings: MagicCube4DSettings;
+  onPickReady?: (picker: (x: number, y: number) => MagicCube4DPickInfo | null) => void;
 }
 
 const EDGE_COLOR = 0x111111;
@@ -31,6 +34,7 @@ export default function MagicCube4DCanvas({
   height,
   rotation4d,
   twistAnimation,
+  settings,
   onPickReady,
 }: Props) {
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -47,6 +51,7 @@ export default function MagicCube4DCanvas({
     height,
     rotation4d,
     twistAnimation,
+    settings,
   });
 
   propsRef.current = {
@@ -57,6 +62,7 @@ export default function MagicCube4DCanvas({
     height,
     rotation4d,
     twistAnimation,
+    settings,
   };
 
   const frameData = useMemo(
@@ -68,8 +74,9 @@ export default function MagicCube4DCanvas({
       width,
       height,
       zoom / DEFAULT_ZOOM,
+      settings,
     ),
-    [state, rotation4d, viewMatrix, twistAnimation, width, height, zoom],
+    [state, rotation4d, viewMatrix, twistAnimation, width, height, zoom, settings],
   );
 
   const updateView = useCallback(() => {
@@ -171,25 +178,29 @@ export default function MagicCube4DCanvas({
     modelGroup.add(edges);
   }, [frameData]);
 
-  const pickSticker = useCallback((x: number, y: number): number | null => {
+  const pickInfo = useCallback((x: number, y: number): MagicCube4DPickInfo | null => {
     for (let i = frameData.polygons.length - 1; i >= 0; i--) {
       const polygon = frameData.polygons[i];
-      if (pointInPolygon([x, y], polygon.points)) {
-        return polygon.stickerIndex;
+      if (hitsPolygon([x, y], polygon.points)) {
+        return {
+          stickerIndex: polygon.stickerIndex,
+          faceIndex: polygon.faceIndex,
+          gripIndex: polygon.gripIndex,
+        };
       }
     }
     return null;
   }, [frameData]);
 
-  useEffect(() => {
-    onPickReady?.(pickSticker);
-  }, [onPickReady, pickSticker]);
+  useLayoutEffect(() => {
+    onPickReady?.(pickInfo);
+  }, [onPickReady, pickInfo]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     rebuildModel();
   }, [rebuildModel]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     updateView();
   }, [updateView, viewMatrix, zoom, width, height]);
 
@@ -297,21 +308,21 @@ function pushColor(target: number[], color: THREE.Color) {
   target.push(color.r, color.g, color.b);
 }
 
-function pointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
-  let sign = 0;
+function hitsPolygon(point: [number, number], polygon: [number, number][]): boolean {
   for (let i = 0; i < polygon.length; i++) {
     const a = polygon[i];
     const b = polygon[(i + 1) % polygon.length];
-    const cross = (b[0] - a[0]) * (point[1] - a[1]) - (b[1] - a[1]) * (point[0] - a[0]);
-    if (Math.abs(cross) < 0.001) {
-      continue;
-    }
-    const current = cross > 0 ? 1 : -1;
-    if (sign === 0) {
-      sign = current;
-    } else if (sign !== current) {
+    if (twiceTriangleArea(a, b, point) > 0) {
       return false;
     }
   }
   return true;
+}
+
+function twiceTriangleArea(v0: [number, number], v1: [number, number], v2: [number, number]): number {
+  const ax = v1[0] - v0[0];
+  const ay = v1[1] - v0[1];
+  const bx = v2[0] - v0[0];
+  const by = v2[1] - v0[1];
+  return ax * by - ay * bx;
 }

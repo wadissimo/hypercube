@@ -1,4 +1,5 @@
 import { MAGICCUBE4D_HYPERCUBE_DATA } from './magiccube4dData';
+import type { MagicCube4DSettings } from './magiccube4dSettings';
 import { mulVec, type Mat3, type Vec3 } from './math3d';
 
 export type Vec4 = [number, number, number, number];
@@ -20,6 +21,8 @@ export interface MagicCube4DStickerGeometry {
 
 export interface MagicCube4DFramePolygon {
   stickerIndex: number;
+  faceIndex: number;
+  gripIndex: number;
   color: string;
   points: [number, number][];
   depth: number;
@@ -27,6 +30,12 @@ export interface MagicCube4DFramePolygon {
 
 export interface MagicCube4DFrame {
   polygons: MagicCube4DFramePolygon[];
+}
+
+export interface MagicCube4DPickInfo {
+  stickerIndex: number;
+  faceIndex: number;
+  gripIndex: number;
 }
 
 interface FaceDisplayState {
@@ -67,11 +76,9 @@ export const MAGICCUBE4D_FACE_LABELS = ['w-', 'z-', 'y-', 'x-', 'x+', 'y+', 'z+'
 const numColorsByCubie = buildNumColorsByCubie();
 const vertexToSticker = buildVertexToSticker();
 const faceCenterStickerMap = buildFaceCenterStickerMap();
-const stickerGripMap = DATA.stickerCenters.map((center, stickerIndex) => getClosestGrip(
-  center as Vec4,
-  DATA.sticker2Face[stickerIndex],
-  stickerIndex,
-));
+const twistDestinationCache = new Map<string, number[]>();
+const stickerGripMap = buildStickerGripMap();
+const faceTwistStickerMap = buildFaceTwistStickerMap();
 
 export function createSolvedMagicCube4DState(): number[] {
   return [...DATA.sticker2Face];
@@ -93,8 +100,27 @@ export function getFaceCenterStickerIndex(faceIndex: number): number {
   return faceCenterStickerMap[faceIndex];
 }
 
+export function getFaceTwistStickerIndex(faceIndex: number): number {
+  return faceTwistStickerMap[faceIndex];
+}
+
 export function getFaceCenter(faceIndex: number): Vec4 {
   return [...DATA.faceCenters[faceIndex]] as Vec4;
+}
+
+export function hasValidTwist(gripIndex: number, sliceMask: number): boolean {
+  if (gripIndex < 0 || gripIndex >= DATA.gripSymmetryOrders.length) {
+    return false;
+  }
+
+  const validSlices = getNumSlicesForGrip(gripIndex);
+  const validBits = (1 << validSlices) - 1;
+  if ((validBits & normalizeSliceMask(sliceMask)) === 0) {
+    return false;
+  }
+
+  const order = DATA.gripSymmetryOrders[gripIndex];
+  return order > 1;
 }
 
 export function buildScrambledMagicCube4DState(length: number): number[] {
@@ -124,15 +150,10 @@ export function applyTwistToState(
 ): number[] {
   const normalizedMask = normalizeSliceMask(sliceMask);
   const next = [...state];
-  const twistMat = getTwistMatrix(gripIndex, dir, 1);
   const faceIndex = DATA.grip2Face[gripIndex];
   const faceNormal = DATA.faceInwardNormals[faceIndex] as Vec4;
   const cutOffsets = DATA.faceCutOffsets[faceIndex];
-  const indexLookup = new Map<string, number>();
-
-  for (let i = 0; i < DATA.stickerCenters.length; i++) {
-    indexLookup.set(hashVec4(DATA.stickerCenters[i] as Vec4), i);
-  }
+  const destinations = getTwistDestinations(gripIndex, dir);
 
   for (let stickerIndex = 0; stickerIndex < state.length; stickerIndex++) {
     const center = DATA.stickerCenters[stickerIndex] as Vec4;
@@ -141,11 +162,7 @@ export function applyTwistToState(
       continue;
     }
 
-    const destination = indexLookup.get(hashVec4(mulRowVec4(center, twistMat)));
-    if (destination == null) {
-      throw new Error(`Missing destination for sticker ${stickerIndex}`);
-    }
-    next[destination] = state[stickerIndex];
+    next[destinations[stickerIndex]] = state[stickerIndex];
   }
 
   return next;
@@ -246,14 +263,19 @@ export function buildMagicCube4DFrame(
   width: number,
   height: number,
   zoomScale = 1,
+  settings?: MagicCube4DSettings,
 ): MagicCube4DFrame {
   if (width <= 0 || height <= 0) {
     return { polygons: [] };
   }
 
-  const baseVerts = computeRestVerts(DATA.faceShrink, DATA.stickerShrink);
+  const renderSettings = resolveRenderSettings(settings);
+  const baseVerts = computeRestVerts(renderSettings.faceShrink, renderSettings.stickerShrink);
   const verts = applyPartialTwistToVerts(baseVerts, animation);
-  const projected3d = verts.map(vertex => rotateProjected3d(project4dVertexTo3d(vertex, rotation4d), viewMatrix));
+  const projected3d = verts.map(vertex => rotateProjected3d(
+    project4dVertexTo3d(vertex, rotation4d, renderSettings.eyeW),
+    viewMatrix,
+  ));
   const frontCulledStickers = buildFrontCellStickerSet(projected3d);
 
   let radius3d = 0;
@@ -270,7 +292,7 @@ export function buildMagicCube4DFrame(
   const xOff = (width > height ? (width - height) / 2 : 0) + minpix / 2;
   const yOff = (height > width ? (height - width) / 2 : 0) + minpix / 2;
   const polys2pixelsSF = minpix / (1.25 * Math.max(radius3d, 0.001));
-  const viewScale = SCALE_FUDGE_2D * polys2pixelsSF * zoomScale;
+  const viewScale = renderSettings.scaleFudge2d * polys2pixelsSF * zoomScale;
 
   const verts2d = projected3d.map(project3dVertexTo2d);
   const sun = normalize3(DATA.sunVec as Vec3) ?? [0, 0, 1];
@@ -279,8 +301,10 @@ export function buildMagicCube4DFrame(
 
   for (const stickerIndex of frontCulledStickers) {
     const faceColor = DATA.defaultFaceColors[state[stickerIndex] % DATA.defaultFaceColors.length];
+    const faceIndex = DATA.sticker2Face[stickerIndex];
 
-    for (const polygon of DATA.stickerInds[stickerIndex]) {
+    for (let polygonIndexWithinSticker = 0; polygonIndexWithinSticker < DATA.stickerInds[stickerIndex].length; polygonIndexWithinSticker++) {
+      const polygon = DATA.stickerInds[stickerIndex][polygonIndexWithinSticker];
       if (!isFrontFacing2dPolygon(verts2d, polygon)) {
         continue;
       }
@@ -297,6 +321,8 @@ export function buildMagicCube4DFrame(
 
       polygons.push({
         stickerIndex,
+        faceIndex,
+        gripIndex: getPickGripForStickerPolygon(stickerIndex, polygonIndexWithinSticker),
         color: multiplyColor(faceColor, brightness),
         points: transformedPoints,
         depth,
@@ -385,7 +411,8 @@ export function createRotateFaceToCenterMatrix(currentView: Mat4, faceIndex: num
 
 function getClosestGrip(pickCoords: Vec4, faceIndex: number, stickerIndex: number): number {
   const cubie = DATA.sticker2Cubie[stickerIndex];
-  const gripDim = 4 - (numColorsByCubie.get(cubie) ?? 1);
+  const numColors = numColorsByCubie.get(cubie) ?? 1;
+  const gripDim = Math.max(4 - numColors, 0);
   let bestGrip = -1;
   let bestDistance = Infinity;
 
@@ -403,6 +430,65 @@ function getClosestGrip(pickCoords: Vec4, faceIndex: number, stickerIndex: numbe
 
   if (bestGrip < 0) {
     throw new Error(`No grip found for sticker ${stickerIndex}`);
+  }
+
+  return bestGrip;
+}
+
+function getClosestGripForPick(
+  pickCoords: Vec4,
+  faceIndex: number,
+  stickerIndex: number,
+  is2x2x2Cell: boolean,
+): number {
+  if (is2x2x2Cell) {
+    return findClosestGripCandidate(pickCoords, faceIndex, 2, false);
+  }
+
+  return getClosestGrip(pickCoords, faceIndex, stickerIndex);
+}
+
+function getClosestTwistGrip(pickCoords: Vec4, faceIndex: number, stickerIndex: number): number {
+  const cubie = DATA.sticker2Cubie[stickerIndex];
+  const gripDim = 4 - (numColorsByCubie.get(cubie) ?? 1);
+  const exact = findClosestGripCandidate(pickCoords, faceIndex, gripDim, true);
+  if (exact >= 0) {
+    return exact;
+  }
+
+  const fallback = findClosestGripCandidate(pickCoords, faceIndex, null, true);
+  if (fallback >= 0) {
+    return fallback;
+  }
+
+  return getClosestGrip(pickCoords, faceIndex, stickerIndex);
+}
+
+function findClosestGripCandidate(
+  pickCoords: Vec4,
+  faceIndex: number,
+  gripDim: number | null,
+  requireValidTwist: boolean,
+): number {
+  let bestGrip = -1;
+  let bestDistance = Infinity;
+
+  for (let i = 0; i < DATA.gripCenters.length; i++) {
+    if (DATA.grip2Face[i] !== faceIndex) {
+      continue;
+    }
+    if (gripDim != null && DATA.gripDims[i] !== gripDim) {
+      continue;
+    }
+    if (requireValidTwist && !hasValidTwist(i, MAGICCUBE4D_DEFAULT_SLICE_MASK)) {
+      continue;
+    }
+
+    const distance = distanceSquared(DATA.gripCenters[i] as Vec4, pickCoords);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestGrip = i;
+    }
   }
 
   return bestGrip;
@@ -453,6 +539,124 @@ function buildFaceCenterStickerMap(): number[] {
   });
 }
 
+function buildStickerGripMap(): number[] {
+  return DATA.stickerInds.map((sticker, stickerIndex) => {
+    const stickerCenter = averageIndexedVec4(sticker);
+    return getClosestTwistGrip(
+      stickerCenter,
+      DATA.sticker2Face[stickerIndex],
+      stickerIndex,
+    );
+  });
+}
+
+function buildFaceTwistStickerMap(): number[] {
+  return DATA.faceCenters.map((faceCenter, faceIndex) => {
+    let bestSticker = -1;
+    let bestDistance = Infinity;
+
+    for (let stickerIndex = 0; stickerIndex < DATA.stickerCenters.length; stickerIndex++) {
+      if (DATA.sticker2Face[stickerIndex] !== faceIndex) {
+        continue;
+      }
+
+      const gripIndex = stickerGripMap[stickerIndex];
+      if (!hasValidTwist(gripIndex, MAGICCUBE4D_DEFAULT_SLICE_MASK)) {
+        continue;
+      }
+
+      const distance = distanceSquared(DATA.stickerCenters[stickerIndex] as Vec4, faceCenter as Vec4);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestSticker = stickerIndex;
+      }
+    }
+
+    if (bestSticker < 0) {
+      throw new Error(`Missing twist sticker for face ${faceIndex}`);
+    }
+
+    return bestSticker;
+  });
+}
+
+function averageIndexedVec4(polygons: number[][]): Vec4 {
+  let sumX = 0;
+  let sumY = 0;
+  let sumZ = 0;
+  let sumW = 0;
+  let count = 0;
+
+  for (const polygon of polygons) {
+    for (const vertexIndex of polygon) {
+      const vertex = DATA.standardStickerVertsAtRest[vertexIndex] as Vec4;
+      sumX += vertex[0];
+      sumY += vertex[1];
+      sumZ += vertex[2];
+      sumW += vertex[3];
+      count++;
+    }
+  }
+
+  return [
+    sumX / count,
+    sumY / count,
+    sumZ / count,
+    sumW / count,
+  ];
+}
+
+function averagePolygonVec4(polygon: number[]): Vec4 {
+  let sumX = 0;
+  let sumY = 0;
+  let sumZ = 0;
+  let sumW = 0;
+
+  for (const vertexIndex of polygon) {
+    const vertex = DATA.standardStickerVertsAtRest[vertexIndex] as Vec4;
+    sumX += vertex[0];
+    sumY += vertex[1];
+    sumZ += vertex[2];
+    sumW += vertex[3];
+  }
+
+  const count = polygon.length || 1;
+  return [
+    sumX / count,
+    sumY / count,
+    sumZ / count,
+    sumW / count,
+  ];
+}
+
+function is2x2x2Cell(polyCenter: Vec4, stickerCenter: Vec4, faceCenter: Vec4): boolean {
+  const epsilon = 0.1;
+  const c1 = distanceSquared(stickerCenter, faceCenter);
+  const c2 = distanceSquared(polyCenter, faceCenter);
+  return Math.abs(c1 - 0.75) < epsilon && Math.abs(c2 - 1.5) < epsilon;
+}
+
+function getPickGripForStickerPolygon(stickerIndex: number, polygonIndexWithinSticker: number): number {
+  return getStickerPolygonPickInfo(stickerIndex, polygonIndexWithinSticker).gripIndex;
+}
+
+function getStickerPolygonPickInfo(stickerIndex: number, polygonIndexWithinSticker: number): MagicCube4DPickInfo {
+  const faceIndex = DATA.sticker2Face[stickerIndex];
+  const sticker = DATA.stickerInds[stickerIndex];
+  const polygon = sticker[polygonIndexWithinSticker];
+  const stickerCenter = averageIndexedVec4(sticker);
+  const polyCenter = averagePolygonVec4(polygon);
+  const faceCenter = DATA.faceCenters[faceIndex] as Vec4;
+  const cellIs2x2x2 = is2x2x2Cell(polyCenter, stickerCenter, faceCenter);
+  const pickCenter = cellIs2x2x2 ? polyCenter : stickerCenter;
+
+  return {
+    stickerIndex,
+    faceIndex,
+    gripIndex: getClosestGripForPick(pickCenter, faceIndex, stickerIndex, cellIs2x2x2),
+  };
+}
+
 function getTwistMatrix(gripIndex: number, dir: 1 | -1, fraction: number): Mat4 {
   const order = DATA.gripSymmetryOrders[gripIndex];
   const angle = dir * ((2 * Math.PI) / order) * fraction;
@@ -461,6 +665,57 @@ function getTwistMatrix(gripIndex: number, dir: 1 | -1, fraction: number): Mat4 
     transpose4(useful),
     mulRowMat4(planeRotation4Row(ROW_ROT_AXIS_A, ROW_ROT_AXIS_B, angle), useful),
   );
+}
+
+function getNumSlicesForGrip(gripIndex: number): number {
+  const faceIndex = DATA.grip2Face[gripIndex];
+  return DATA.faceCutOffsets[faceIndex].length + 1;
+}
+
+function getTwistDestinations(gripIndex: number, dir: 1 | -1): number[] {
+  const key = `${gripIndex}:${dir}`;
+  const cached = twistDestinationCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const twistMat = getTwistMatrix(gripIndex, dir, 1);
+  const destinations = DATA.stickerCenters.map((center, stickerIndex) => (
+    findClosestStickerIndex(mulRowVec4(center as Vec4, twistMat), stickerIndex, gripIndex, dir)
+  ));
+
+  const seen = new Set<number>();
+  for (let stickerIndex = 0; stickerIndex < destinations.length; stickerIndex++) {
+    const destination = destinations[stickerIndex];
+    if (seen.has(destination)) {
+      throw new Error(`Duplicate destination ${destination} for grip ${gripIndex} dir ${dir}`);
+    }
+    seen.add(destination);
+  }
+
+  twistDestinationCache.set(key, destinations);
+  return destinations;
+}
+
+function findClosestStickerIndex(target: Vec4, stickerIndex: number, gripIndex: number, dir: 1 | -1): number {
+  let bestIndex = -1;
+  let bestDistance = Infinity;
+
+  for (let candidateIndex = 0; candidateIndex < DATA.stickerCenters.length; candidateIndex++) {
+    const distance = distanceSquared(target, DATA.stickerCenters[candidateIndex] as Vec4);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = candidateIndex;
+    }
+  }
+
+  if (bestIndex < 0 || bestDistance > 1e-4) {
+    throw new Error(
+      `Missing destination for sticker ${stickerIndex} grip ${gripIndex} dir ${dir}; nearest distance ${bestDistance}`,
+    );
+  }
+
+  return bestIndex;
 }
 
 function makeRowRotMatThatSlerps(fromInput: Vec4, toInput: Vec4, t: number): Mat4 {
@@ -576,10 +831,6 @@ function snapUnit(value: number): number {
   return value;
 }
 
-function hashVec4(vector: Vec4): string {
-  return vector.map(value => Math.round(value * 1e6)).join(':');
-}
-
 function distanceSquared(a: Vec4, b: Vec4): number {
   return (
     (a[0] - b[0]) ** 2 +
@@ -677,7 +928,11 @@ function dot3(a: Vec3, b: Vec3): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
-function createFaceDisplayStates(rotation4d: Mat4): Map<number, FaceDisplayState> {
+function createFaceDisplayStates(
+  rotation4d: Mat4,
+  displayCameraW = DISPLAY_CAMERA_W,
+  faceSpacing = SIDE_EXPLODED_DISTANCE,
+): Map<number, FaceDisplayState> {
   const entries = DATA.faceCenters.map((center, faceIndex) => {
     const center4d = center as Vec4;
     const rotatedCenter4d = mulRowVec4(center4d, rotation4d);
@@ -686,10 +941,10 @@ function createFaceDisplayStates(rotation4d: Mat4): Map<number, FaceDisplayState
       rotatedCenter4d[1] * SCALE_4D,
       rotatedCenter4d[2] * SCALE_4D,
       rotatedCenter4d[3] * SCALE_4D,
-    ], DISPLAY_CAMERA_W);
+    ], displayCameraW);
     const fixedAxis = faceFixedAxis(faceIndex);
     const localAxes = ([0, 1, 2, 3] as const).filter(axis => axis !== fixedAxis) as Axis4[];
-    const rawBasis = localAxes.map(axis => projectAxisBasis(center4d, rotation4d, axis)) as [Vec3, Vec3, Vec3];
+    const rawBasis = localAxes.map(axis => projectAxisBasis(center4d, rotation4d, axis, displayCameraW)) as [Vec3, Vec3, Vec3];
 
     return {
       faceIndex,
@@ -720,7 +975,7 @@ function createFaceDisplayStates(rotation4d: Mat4): Map<number, FaceDisplayState
     result.set(entry.faceIndex, {
       center4d: entry.center4d,
       center3d: entry.projectedCenter3d,
-      offset3d: explodeOffset(subtract3(entry.projectedCenter3d, innerCenter), isInner ? 0 : SIDE_EXPLODED_DISTANCE),
+      offset3d: explodeOffset(subtract3(entry.projectedCenter3d, innerCenter), isInner ? 0 : faceSpacing),
       visible: entry.faceIndex !== outerFace,
       axisBasis,
     });
@@ -745,11 +1000,11 @@ function faceFixedAxis(faceIndex: number): Axis4 {
   return bestAxis;
 }
 
-function projectAxisBasis(center4d: Vec4, rotation4d: Mat4, axis: Axis4): Vec3 {
+function projectAxisBasis(center4d: Vec4, rotation4d: Mat4, axis: Axis4, displayCameraW: number): Vec3 {
   const unit = [0, 0, 0, 0] as Vec4;
   unit[axis] = 1;
-  const plus = project4dTo3d(scale4(mulRowVec4(add4(center4d, unit), rotation4d), SCALE_4D), DISPLAY_CAMERA_W);
-  const minus = project4dTo3d(scale4(mulRowVec4(sub4(center4d, unit), rotation4d), SCALE_4D), DISPLAY_CAMERA_W);
+  const plus = project4dTo3d(scale4(mulRowVec4(add4(center4d, unit), rotation4d), SCALE_4D), displayCameraW);
+  const minus = project4dTo3d(scale4(mulRowVec4(sub4(center4d, unit), rotation4d), SCALE_4D), displayCameraW);
   return scale3(subtract3(plus, minus), 0.5);
 }
 
@@ -884,14 +1139,14 @@ function applyPartialTwistToVerts(
   ));
 }
 
-function project4dVertexTo3d(vertex: Vec4, rotation4d: Mat4): Vec4 {
+function project4dVertexTo3d(vertex: Vec4, rotation4d: Mat4, eyeW: number): Vec4 {
   const rotated = mulRowVec4(vertex, rotation4d);
   const scaled = scale4(rotated, SCALE_4D);
-  const w = DATA.eyeW - scaled[3];
+  const w = eyeW - scaled[3];
   return [
-    scaled[0] * DATA.eyeW / w,
-    scaled[1] * DATA.eyeW / w,
-    scaled[2] * DATA.eyeW / w,
+    scaled[0] * eyeW / w,
+    scaled[1] * eyeW / w,
+    scaled[2] * eyeW / w,
     w,
   ];
 }
@@ -916,6 +1171,20 @@ function buildFrontCellStickerSet(verts: Vec4[]): number[] {
   }
 
   return visible;
+}
+
+function resolveRenderSettings(settings?: MagicCube4DSettings): {
+  faceShrink: number;
+  stickerShrink: number;
+  eyeW: number;
+  scaleFudge2d: number;
+} {
+  return {
+    faceShrink: DATA.faceShrink * (settings?.faceSpacing ?? 1),
+    stickerShrink: DATA.stickerShrink / (settings?.stickerSpacing ?? 1),
+    eyeW: DATA.eyeW * (settings?.projection4d ?? 1),
+    scaleFudge2d: SCALE_FUDGE_2D * (settings?.projectionScale ?? 1),
+  };
 }
 
 function project3dVertexTo2d(vertex: Vec4): Vec4 {

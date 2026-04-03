@@ -2,9 +2,11 @@ import React, { useCallback, useRef, useState } from 'react';
 import { View, StyleSheet, useWindowDimensions, Pressable, Text } from 'react-native';
 import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
+import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CubeCanvas from './components/CubeCanvas';
 import MagicCube4DCanvas from './components/MagicCube4DCanvas';
+import MagicCube4DSettingsSheet from './components/MagicCube4DSettingsSheet';
 import type { Axis, CubeSize, CubeState, Face } from './utils/cubeModel';
 import {
   ALL_FACES,
@@ -20,12 +22,17 @@ import { useMagicCube4D } from './hooks/useMagicCube4D';
 import { useTwistAnimation } from './hooks/useTwistAnimation';
 import {
   getFaceCenterStickerIndex,
-  getStickerFaceIndex,
+  getFaceTwistStickerIndex,
+  type MagicCube4DPickInfo,
   MAGICCUBE4D_FACE_COLORS,
   MAGICCUBE4D_FACE_LABELS,
   MAGICCUBE4D_SLICE_BITS,
   MAGICCUBE4D_SLICE_LABELS,
 } from './utils/magiccube4d';
+import {
+  clampMagicCube4DSettings,
+  DEFAULT_MAGICCUBE4D_SETTINGS,
+} from './utils/magiccube4dSettings';
 
 const SCRAMBLE_MOVES = 20;
 type ScreenMode = 'cube' | 'hypercube';
@@ -39,6 +46,8 @@ export default function Index() {
   const [scrambleText, setScrambleText] = useState('');
   const [canvasHeight, setCanvasHeight] = useState(0);
   const [selected4DFace, setSelected4DFace] = useState(4);
+  const [magicCube4DSettingsOpen, setMagicCube4DSettingsOpen] = useState(false);
+  const [magicCube4DSettings, setMagicCube4DSettings] = useState(DEFAULT_MAGICCUBE4D_SETTINGS);
   const cubeHistoryRef = useRef<CubeState[]>([]);
   const { twistAnim, twist } = useTwistAnimation(setCubeState, previousState => {
     cubeHistoryRef.current.push(previousState);
@@ -55,40 +64,47 @@ export default function Index() {
     reset: resetMagicCube4D,
     scramble: scrambleMagicCube4D,
     undo: undoMagicCube4D,
+    twistGrip,
     twistSticker,
     rotateFaceToCenter,
-  } = useMagicCube4D();
-  const magicCube4DPickRef = useRef<(x: number, y: number) => number | null>(() => null);
+  } = useMagicCube4D({
+    twistDurationMs: magicCube4DSettings.twistDurationMs,
+    animationDurationMs: magicCube4DSettings.animationDurationMs,
+  });
+  const magicCube4DPickRef = useRef<(x: number, y: number) => MagicCube4DPickInfo | null>(() => null);
   const cubeDisabled = !!twistAnim || mode !== 'cube';
   const cubeGesture = useCubeGesture({
     cubeState, cubeSize, width, height: canvasHeight,
     onTwist: twist, disabled: cubeDisabled,
   });
   const handleHypercubeDoubleTap = useCallback((point: [number, number]) => {
-    const stickerIndex = magicCube4DPickRef.current(point[0], point[1]);
-    if (stickerIndex != null) {
-      setSelected4DFace(getStickerFaceIndex(stickerIndex));
+    const pickInfo = magicCube4DPickRef.current(point[0], point[1]);
+    if (pickInfo) {
+      setSelected4DFace(pickInfo.faceIndex);
     }
-    rotateFaceToCenter(stickerIndex);
+    rotateFaceToCenter(pickInfo?.stickerIndex ?? null);
   }, [rotateFaceToCenter]);
   const handleHypercubeTap = useCallback((point: [number, number]) => {
-    const stickerIndex = magicCube4DPickRef.current(point[0], point[1]);
-    if (stickerIndex != null) {
-      setSelected4DFace(getStickerFaceIndex(stickerIndex));
+    const pickInfo = magicCube4DPickRef.current(point[0], point[1]);
+    if (pickInfo) {
+      setSelected4DFace(pickInfo.faceIndex);
     }
-    twistSticker(stickerIndex, 1);
-  }, [twistSticker]);
+    twistGrip(pickInfo?.gripIndex ?? null, 1);
+  }, [twistGrip]);
   const handleHypercubeLongTap = useCallback((point: [number, number]) => {
-    const stickerIndex = magicCube4DPickRef.current(point[0], point[1]);
-    if (stickerIndex != null) {
-      setSelected4DFace(getStickerFaceIndex(stickerIndex));
+    const pickInfo = magicCube4DPickRef.current(point[0], point[1]);
+    if (pickInfo) {
+      setSelected4DFace(pickInfo.faceIndex);
     }
-    twistSticker(stickerIndex, -1);
-  }, [twistSticker]);
+    twistGrip(pickInfo?.gripIndex ?? null, -1);
+  }, [twistGrip]);
   const previewGesture = useHypercubeGesture({
     onTap: handleHypercubeTap,
     onLongTap: handleHypercubeLongTap,
     onDoubleTap: handleHypercubeDoubleTap,
+    dragSensitivity: magicCube4DSettings.dragSensitivity,
+    viewPitchDeg: magicCube4DSettings.viewPitchDeg,
+    viewYawDeg: magicCube4DSettings.viewYawDeg,
     disabled: magicCube4DAnimating,
   });
 
@@ -109,6 +125,13 @@ export default function Index() {
   const handleHypercubeMode = () => {
     if (!!twistAnim) return;
     setMode('hypercube');
+  };
+
+  const handleOpen4DSettings = () => {
+    if (mode !== 'hypercube') {
+      return;
+    }
+    setMagicCube4DSettingsOpen(true);
   };
 
   const handleReset = () => {
@@ -156,7 +179,7 @@ export default function Index() {
   };
 
   const handle4DControlTwist = (dir: 1 | -1) => {
-    twistSticker(getFaceCenterStickerIndex(selected4DFace), dir);
+    twistSticker(getFaceTwistStickerIndex(selected4DFace), dir);
   };
 
   const handle4DControlCenter = () => {
@@ -165,178 +188,198 @@ export default function Index() {
 
   return (
     <GestureHandlerRootView style={styles.root}>
-      <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
-        <View style={styles.modeBar}>
-          {SUPPORTED_CUBE_SIZES.map((size, i) => (
+      <BottomSheetModalProvider>
+        <SafeAreaView edges={['top', 'bottom']} style={styles.safeArea}>
+          <View style={styles.modeBar}>
+            {SUPPORTED_CUBE_SIZES.map((size, i) => (
+              <Pressable
+                key={size}
+                style={[
+                  styles.modeButton,
+                  mode === 'cube' && size === cubeSize && styles.modeButtonActive,
+                  i === 0 && styles.modeButtonFirst,
+                ]}
+                onPress={() => handleSizeChange(size)}
+                disabled={!!twistAnim}
+              >
+                <Text
+                  style={[
+                    styles.modeButtonText,
+                    mode === 'cube' && size === cubeSize && styles.modeButtonTextActive,
+                  ]}
+                >
+                  {size}x{size}
+                </Text>
+              </Pressable>
+            ))}
             <Pressable
-              key={size}
               style={[
                 styles.modeButton,
-                mode === 'cube' && size === cubeSize && styles.modeButtonActive,
-                i === 0 && styles.modeButtonFirst,
+                styles.modeButtonLast,
+                mode === 'hypercube' && styles.modeButtonActive,
               ]}
-              onPress={() => handleSizeChange(size)}
+              onPress={handleHypercubeMode}
               disabled={!!twistAnim}
             >
               <Text
                 style={[
                   styles.modeButtonText,
-                  mode === 'cube' && size === cubeSize && styles.modeButtonTextActive,
+                  mode === 'hypercube' && styles.modeButtonTextActive,
                 ]}
               >
-                {size}x{size}
+                4D
               </Text>
             </Pressable>
-          ))}
-          <Pressable
-            style={[
-              styles.modeButton,
-              styles.modeButtonLast,
-              mode === 'hypercube' && styles.modeButtonActive,
-            ]}
-            onPress={handleHypercubeMode}
-            disabled={!!twistAnim}
-          >
+          </View>
+          <View style={styles.topBar}>
+            <View style={styles.actionGroup}>
+              <ActionButton
+                icon="arrow-undo"
+                label="Undo"
+                onPress={handleUndo}
+                disabled={mode === 'cube' ? !cubeCanUndo || !!twistAnim : !magicCube4DCanUndo || magicCube4DAnimating}
+              />
+              <ActionButton
+                icon="refresh"
+                label="Reset"
+                onPress={handleReset}
+                disabled={actionDisabled}
+              />
+            </View>
             <Text
-              style={[
-                styles.modeButtonText,
-                mode === 'hypercube' && styles.modeButtonTextActive,
-              ]}
+              style={styles.scrambleText}
+              numberOfLines={2}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
             >
-              4D
+              {mode === 'cube'
+                ? scrambleText
+                : `Magic Cube 4D  •  tap CCW  •  hold CW  •  slices ${MAGICCUBE4D_SLICE_LABELS[sliceMask]}`}
             </Text>
-          </Pressable>
-        </View>
-        <View style={styles.topBar}>
-          <View style={styles.actionGroup}>
-            <ActionButton
-              icon="arrow-undo"
-              label="Undo"
-              onPress={handleUndo}
-              disabled={mode === 'cube' ? !cubeCanUndo || !!twistAnim : !magicCube4DCanUndo || magicCube4DAnimating}
-            />
-            <ActionButton
-              icon="refresh"
-              label="Reset"
-              onPress={handleReset}
-              disabled={actionDisabled}
-            />
+            <View style={styles.actionGroup}>
+              {mode === 'hypercube' && (
+                <ActionButton
+                  icon="options-outline"
+                  label="Settings"
+                  onPress={handleOpen4DSettings}
+                  disabled={false}
+                />
+              )}
+              <ActionButton
+                icon="shuffle"
+                label="Scramble"
+                onPress={handleScramble}
+                disabled={actionDisabled}
+              />
+            </View>
           </View>
-          <Text
-            style={styles.scrambleText}
-            numberOfLines={2}
-            adjustsFontSizeToFit
-            minimumFontScale={0.7}
-          >
-            {mode === 'cube'
-              ? scrambleText
-              : `Magic Cube 4D  •  tap CCW  •  hold CW  •  slices ${MAGICCUBE4D_SLICE_LABELS[sliceMask]}`}
-          </Text>
-          <ActionButton
-            icon="shuffle"
-            label="Scramble"
-            onPress={handleScramble}
-            disabled={actionDisabled}
-          />
-        </View>
-        {mode === 'hypercube' && (
-          <>
-            <View style={styles.sliceBar}>
-              {MAGICCUBE4D_SLICE_BITS.map(bit => {
-                const active = (sliceMask & bit) !== 0;
-                return (
-                  <Pressable
-                    key={bit}
-                    style={[
-                      styles.sliceButton,
-                      active && styles.sliceButtonActive,
-                    ]}
-                    onPress={() => setSliceMask(mask => {
-                      const nextMask = (mask ^ bit) & 0b111;
-                      return nextMask === 0 ? bit : nextMask;
-                    })}
-                    disabled={magicCube4DAnimating}
-                  >
-                    <Text style={[
-                      styles.sliceButtonText,
-                      active && styles.sliceButtonTextActive,
-                    ]}
+          <GestureDetector gesture={activeGesture.gesture}>
+            <View
+              style={styles.canvas}
+              onLayout={e => setCanvasHeight(e.nativeEvent.layout.height)}
+            >
+              {mode === 'cube' ? (
+                <CubeCanvas
+                  cubeState={cubeState}
+                  cubeSize={cubeSize}
+                  viewMatrix={activeGesture.viewMatrix}
+                  zoom={activeGesture.zoom}
+                  twistAnim={twistAnim}
+                  width={width}
+                  height={canvasHeight}
+                />
+              ) : (
+                <MagicCube4DCanvas
+                  state={magicCube4DState}
+                  viewMatrix={activeGesture.viewMatrix}
+                  zoom={activeGesture.zoom}
+                  width={width}
+                  height={canvasHeight}
+                  rotation4d={rotation4d}
+                  twistAnimation={magicCube4DTwistAnimation}
+                  settings={magicCube4DSettings}
+                  onPickReady={(picker) => {
+                    magicCube4DPickRef.current = picker;
+                  }}
+                />
+              )}
+            </View>
+          </GestureDetector>
+          {mode === 'hypercube' && (
+            <View style={styles.hypercubeControls}>
+              <View style={styles.sliceBar}>
+                {MAGICCUBE4D_SLICE_BITS.map(bit => {
+                  const active = (sliceMask & bit) !== 0;
+                  return (
+                    <Pressable
+                      key={bit}
+                      style={[
+                        styles.sliceButton,
+                        active && styles.sliceButtonActive,
+                      ]}
+                      onPress={() => setSliceMask(mask => {
+                        const nextMask = (mask ^ bit) & 0b111;
+                        return nextMask === 0 ? bit : nextMask;
+                      })}
+                      disabled={magicCube4DAnimating}
                     >
-                      Slice {MAGICCUBE4D_SLICE_LABELS[bit]}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-            <View style={styles.bottomControls}>
-              <View style={styles.facePickerRow}>
-                {MAGICCUBE4D_FACE_LABELS.map((label, faceIndex) => (
-                  <Pressable
-                    key={label}
-                    style={[
-                      styles.faceChip,
-                      { backgroundColor: MAGICCUBE4D_FACE_COLORS[faceIndex] },
-                      selected4DFace === faceIndex && styles.faceChipActive,
-                    ]}
-                    onPress={() => setSelected4DFace(faceIndex)}
+                      <Text style={[
+                        styles.sliceButtonText,
+                        active && styles.sliceButtonTextActive,
+                      ]}
+                      >
+                        Slice {MAGICCUBE4D_SLICE_LABELS[bit]}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <View style={styles.bottomControls}>
+                <View style={styles.facePickerRow}>
+                  {MAGICCUBE4D_FACE_LABELS.map((label, faceIndex) => (
+                    <Pressable
+                      key={label}
+                      style={[
+                        styles.faceChip,
+                        { backgroundColor: MAGICCUBE4D_FACE_COLORS[faceIndex] },
+                        selected4DFace === faceIndex && styles.faceChipActive,
+                      ]}
+                      onPress={() => setSelected4DFace(faceIndex)}
+                      disabled={magicCube4DAnimating}
+                    >
+                      <Text style={styles.faceChipText}>{label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                <View style={styles.bottomActionRow}>
+                  <BottomControlButton
+                    label="Center"
+                    onPress={handle4DControlCenter}
                     disabled={magicCube4DAnimating}
-                  >
-                    <Text style={styles.faceChipText}>{label}</Text>
-                  </Pressable>
-                ))}
-              </View>
-              <View style={styles.bottomActionRow}>
-                <BottomControlButton
-                  label="Center"
-                  onPress={handle4DControlCenter}
-                  disabled={magicCube4DAnimating}
-                />
-                <BottomControlButton
-                  label="CCW"
-                  onPress={() => handle4DControlTwist(1)}
-                  disabled={magicCube4DAnimating}
-                />
-                <BottomControlButton
-                  label="CW"
-                  onPress={() => handle4DControlTwist(-1)}
-                  disabled={magicCube4DAnimating}
-                />
+                  />
+                  <BottomControlButton
+                    label="CCW"
+                    onPress={() => handle4DControlTwist(1)}
+                    disabled={magicCube4DAnimating}
+                  />
+                  <BottomControlButton
+                    label="CW"
+                    onPress={() => handle4DControlTwist(-1)}
+                    disabled={magicCube4DAnimating}
+                  />
+                </View>
               </View>
             </View>
-          </>
-        )}
-        <GestureDetector gesture={activeGesture.gesture}>
-          <View
-            style={styles.canvas}
-            onLayout={e => setCanvasHeight(e.nativeEvent.layout.height)}
-          >
-            {mode === 'cube' ? (
-              <CubeCanvas
-                cubeState={cubeState}
-                cubeSize={cubeSize}
-                viewMatrix={activeGesture.viewMatrix}
-                zoom={activeGesture.zoom}
-                twistAnim={twistAnim}
-                width={width}
-                height={canvasHeight}
-              />
-            ) : (
-              <MagicCube4DCanvas
-                state={magicCube4DState}
-                viewMatrix={activeGesture.viewMatrix}
-                zoom={activeGesture.zoom}
-                width={width}
-                height={canvasHeight}
-                rotation4d={rotation4d}
-                twistAnimation={magicCube4DTwistAnimation}
-                onPickReady={(picker) => {
-                  magicCube4DPickRef.current = picker;
-                }}
-              />
-            )}
-          </View>
-        </GestureDetector>
-      </SafeAreaView>
+          )}
+          <MagicCube4DSettingsSheet
+            visible={magicCube4DSettingsOpen}
+            settings={magicCube4DSettings}
+            onChange={(nextSettings) => setMagicCube4DSettings(clampMagicCube4DSettings(nextSettings))}
+            onClose={() => setMagicCube4DSettingsOpen(false)}
+            onReset={() => setMagicCube4DSettings(DEFAULT_MAGICCUBE4D_SETTINGS)}
+          />
+        </SafeAreaView>
+      </BottomSheetModalProvider>
     </GestureHandlerRootView>
   );
 }
@@ -492,8 +535,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     paddingHorizontal: 14,
-    paddingBottom: 8,
     gap: 8,
+  },
+  hypercubeControls: {
+    paddingTop: 10,
+    paddingBottom: 14,
+    gap: 10,
   },
   sliceButton: {
     borderRadius: 999,
@@ -517,7 +564,6 @@ const styles = StyleSheet.create({
   },
   bottomControls: {
     paddingHorizontal: 14,
-    paddingBottom: 14,
     gap: 10,
   },
   facePickerRow: {

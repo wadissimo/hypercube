@@ -1,11 +1,9 @@
-import { useReducer, useRef } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import type { Mat3 } from '../utils/math3d';
 import { mulMat, rotX, rotY } from '../utils/math3d';
 
-const SENSITIVITY = 0.006;
-const INITIAL_RX = Math.PI / 5.5;
-const INITIAL_RY = -Math.PI / 5;
+const BASE_SENSITIVITY = 0.006;
 const INITIAL_ZOOM = 0.62;
 const MIN_ZOOM = 0.35;
 const MAX_ZOOM = 1.9;
@@ -14,15 +12,31 @@ interface Params {
   onTap: (point: [number, number]) => void;
   onLongTap: (point: [number, number]) => void;
   onDoubleTap: (point: [number, number]) => void;
+  dragSensitivity?: number;
+  viewPitchDeg?: number;
+  viewYawDeg?: number;
   disabled?: boolean;
 }
 
-export function useHypercubeGesture({ onTap, onLongTap, onDoubleTap, disabled = false }: Params) {
-  const viewMatrix = useRef<Mat3>(mulMat(rotX(INITIAL_RX), rotY(INITIAL_RY)));
+export function useHypercubeGesture({
+  onTap,
+  onLongTap,
+  onDoubleTap,
+  dragSensitivity = 1,
+  viewPitchDeg = 33,
+  viewYawDeg = -36,
+  disabled = false,
+}: Params) {
+  const viewMatrix = useRef<Mat3>(createViewMatrix(viewPitchDeg, viewYawDeg));
   const prevTranslation = useRef<[number, number]>([0, 0]);
   const zoom = useRef(INITIAL_ZOOM);
   const pinchStartZoom = useRef(INITIAL_ZOOM);
   const [, forceRender] = useReducer((value: number) => value + 1, 0);
+
+  useEffect(() => {
+    viewMatrix.current = createViewMatrix(viewPitchDeg, viewYawDeg);
+    forceRender();
+  }, [viewPitchDeg, viewYawDeg]);
 
   const panGesture = Gesture.Pan()
     .runOnJS(true)
@@ -33,7 +47,8 @@ export function useHypercubeGesture({ onTap, onLongTap, onDoubleTap, disabled = 
       const dx = event.translationX - prevTranslation.current[0];
       const dy = event.translationY - prevTranslation.current[1];
       prevTranslation.current = [event.translationX, event.translationY];
-      const delta = mulMat(rotX(-dy * SENSITIVITY), rotY(-dx * SENSITIVITY));
+      const sensitivity = BASE_SENSITIVITY * dragSensitivity;
+      const delta = mulMat(rotX(-dy * sensitivity), rotY(-dx * sensitivity));
       viewMatrix.current = mulMat(delta, viewMatrix.current);
       forceRender();
     });
@@ -92,4 +107,12 @@ export function useHypercubeGesture({ onTap, onLongTap, onDoubleTap, disabled = 
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function createViewMatrix(viewPitchDeg: number, viewYawDeg: number): Mat3 {
+  return mulMat(rotX(toRadians(viewPitchDeg)), rotY(toRadians(viewYawDeg)));
+}
+
+function toRadians(degrees: number): number {
+  return (degrees * Math.PI) / 180;
 }

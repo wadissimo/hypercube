@@ -4,6 +4,7 @@ import {
   buildScrambledMagicCube4DState,
   createRotateFaceToCenterMatrix,
   createSolvedMagicCube4DState,
+  hasValidTwist,
   getStickerFaceIndex,
   getStickerGripIndex,
   MAGICCUBE4D_DEFAULT_SLICE_MASK,
@@ -11,11 +12,15 @@ import {
   type MagicCube4DTwistAnimation,
   type Mat4,
 } from '../utils/magiccube4d';
+interface Params {
+  twistDurationMs?: number;
+  animationDurationMs?: number;
+}
 
-const TWIST_DURATION_MS = 260;
-const VIEW_ROTATION_DURATION_MS = 240;
-
-export function useMagicCube4D() {
+export function useMagicCube4D({
+  twistDurationMs = 260,
+  animationDurationMs = 240,
+}: Params = {}) {
   const [state, setState] = useState<number[]>(createSolvedMagicCube4DState);
   const [sliceMask, setSliceMask] = useState(MAGICCUBE4D_DEFAULT_SLICE_MASK);
   const [twistAnimation, setTwistAnimation] = useState<MagicCube4DTwistAnimation | null>(null);
@@ -88,7 +93,7 @@ export function useMagicCube4D() {
 
     const startedAt = Date.now();
     const tick = () => {
-      const progress = Math.min((Date.now() - startedAt) / VIEW_ROTATION_DURATION_MS, 1);
+      const progress = Math.min((Date.now() - startedAt) / animationDurationMs, 1);
       const eased = 1 - Math.pow(1 - progress, 3);
       const nextView = createRotateFaceToCenterMatrix(startView, faceIndex, eased);
       if (nextView) {
@@ -104,18 +109,20 @@ export function useMagicCube4D() {
     };
 
     viewFrameRef.current = requestAnimationFrame(tick);
-  }, [baseView]);
+  }, [animationDurationMs, baseView]);
 
-  const twistSticker = useCallback((stickerIndex: number | null, dir: 1 | -1) => {
-    if (stickerIndex == null || twistFrameRef.current || viewFrameRef.current) {
+  const twistGrip = useCallback((gripIndex: number | null, dir: 1 | -1) => {
+    if (gripIndex == null || twistFrameRef.current || viewFrameRef.current) {
       return;
     }
 
-    const gripIndex = getStickerGripIndex(stickerIndex);
+    if (!hasValidTwist(gripIndex, sliceMask)) {
+      return;
+    }
     const startedAt = Date.now();
 
     const tick = () => {
-      const progress = Math.min((Date.now() - startedAt) / TWIST_DURATION_MS, 1);
+      const progress = Math.min((Date.now() - startedAt) / twistDurationMs, 1);
       const eased = 0.5 - Math.cos(progress * Math.PI) / 2;
       setTwistAnimation({
         gripIndex,
@@ -144,7 +151,11 @@ export function useMagicCube4D() {
       progress: 0,
     });
     twistFrameRef.current = requestAnimationFrame(tick);
-  }, [sliceMask]);
+  }, [sliceMask, twistDurationMs]);
+
+  const twistSticker = useCallback((stickerIndex: number | null, dir: 1 | -1) => {
+    twistGrip(stickerIndex == null ? null : getStickerGripIndex(stickerIndex), dir);
+  }, [twistGrip]);
 
   return {
     state,
@@ -157,6 +168,7 @@ export function useMagicCube4D() {
     reset,
     scramble,
     undo,
+    twistGrip,
     twistSticker,
     rotateFaceToCenter,
   };
