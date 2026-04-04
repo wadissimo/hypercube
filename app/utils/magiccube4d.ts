@@ -13,14 +13,9 @@ export interface MagicCube4DTwistAnimation {
   progress: number;
 }
 
-export interface MagicCube4DStickerGeometry {
-  stickerIndex: number;
-  color: string;
-  polygons: Vec3[][];
-}
-
 export interface MagicCube4DFramePolygon {
   stickerIndex: number;
+  cubieIndex: number;
   faceIndex: number;
   gripIndex: number;
   color: string;
@@ -34,28 +29,16 @@ export interface MagicCube4DFrame {
 
 export interface MagicCube4DPickInfo {
   stickerIndex: number;
+  cubieIndex: number;
   faceIndex: number;
   gripIndex: number;
-}
-
-interface FaceDisplayState {
-  center4d: Vec4;
-  center3d: Vec3;
-  offset3d: Vec3;
-  visible: boolean;
-  axisBasis: Partial<Record<Axis4, Vec3>>;
 }
 
 const DATA = MAGICCUBE4D_HYPERCUBE_DATA;
 const SCALE_4D = 1 / DATA.circumRadius;
 const EPSILON = 1e-6;
-const MODEL_RADIUS = 2.95;
 const ROW_ROT_AXIS_A: 2 = 2;
 const ROW_ROT_AXIS_B: 3 = 3;
-const DISPLAY_CAMERA_W = 6.8;
-const INNER_CELL_SCALE = 0.92;
-const SIDE_CELL_SCALE = 0.9;
-const SIDE_EXPLODED_DISTANCE = 2.15;
 const SCALE_FUDGE_2D = 4.7;
 
 export const MAGICCUBE4D_DEFAULT_SLICE_MASK = 1;
@@ -92,8 +75,8 @@ export function getStickerGripIndex(stickerIndex: number): number {
   return stickerGripMap[stickerIndex];
 }
 
-export function getGripOrder(gripIndex: number): number {
-  return DATA.gripSymmetryOrders[gripIndex];
+export function getStickerCubieIndex(stickerIndex: number): number {
+  return DATA.sticker2Cubie[stickerIndex];
 }
 
 export function getFaceCenterStickerIndex(faceIndex: number): number {
@@ -134,7 +117,7 @@ export function buildScrambledMagicCube4DState(length: number): number[] {
     } while (DATA.gripSymmetryOrders[grip] <= 1 || grip === lastGrip);
 
     const dir: 1 | -1 = Math.random() < 0.5 ? 1 : -1;
-    const sliceMask = MAGICCUBE4D_SLICE_BITS[Math.floor(Math.random() * MAGICCUBE4D_SLICE_BITS.length)];
+    const sliceMask = 1 << Math.floor(Math.random() * getNumSlicesForGrip(grip));
     state = applyTwistToState(state, grip, dir, sliceMask);
     lastGrip = grip;
   }
@@ -166,93 +149,6 @@ export function applyTwistToState(
   }
 
   return next;
-}
-
-export function buildStickerGeometry(
-  state: number[],
-  rotation4d: Mat4,
-  animation: MagicCube4DTwistAnimation | null,
-): MagicCube4DStickerGeometry[] {
-  const activeFace = animation ? DATA.grip2Face[animation.gripIndex] : null;
-  const activeNormal = activeFace == null ? null : DATA.faceInwardNormals[activeFace] as Vec4;
-  const activeOffsets = activeFace == null ? null : DATA.faceCutOffsets[activeFace];
-  const twistMat = animation ? getTwistMatrix(animation.gripIndex, animation.dir, animation.progress) : null;
-  const stickerPolygons = DATA.stickerInds;
-  const stickerVerts = DATA.standardStickerVertsAtRest;
-  const displayStates = createFaceDisplayStates(rotation4d);
-
-  const geometries: {
-    stickerIndex: number;
-    color: string;
-    polygons: Vec3[][];
-  }[] = [];
-  let minX = Infinity;
-  let minY = Infinity;
-  let minZ = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  let maxZ = -Infinity;
-
-  for (let stickerIndex = 0; stickerIndex < stickerPolygons.length; stickerIndex++) {
-    const faceIndex = DATA.sticker2Face[stickerIndex];
-    const display = displayStates.get(faceIndex);
-    if (!display || !display.visible) {
-      continue;
-    }
-
-    const affected = !!(animation && activeNormal && activeOffsets && isStickerInSliceMask(
-      DATA.stickerCenters[stickerIndex] as Vec4,
-      animation.sliceMask,
-      activeNormal,
-      activeOffsets,
-    ));
-
-    const projectedPolygons = stickerPolygons[stickerIndex].map(poly => (
-      orientPolygon(poly.map(vertexIndex => projectDisplayVertex(
-        stickerVerts[vertexIndex] as Vec4,
-        display,
-        affected ? twistMat : null,
-      )), add3(display.center3d, display.offset3d))
-    ));
-
-    for (const polygon of projectedPolygons) {
-      for (const point of polygon) {
-        minX = Math.min(minX, point[0]);
-        minY = Math.min(minY, point[1]);
-        minZ = Math.min(minZ, point[2]);
-        maxX = Math.max(maxX, point[0]);
-        maxY = Math.max(maxY, point[1]);
-        maxZ = Math.max(maxZ, point[2]);
-      }
-    }
-
-    geometries.push({
-      stickerIndex,
-      color: MAGICCUBE4D_FACE_COLORS[state[stickerIndex]],
-      polygons: projectedPolygons,
-    });
-  }
-
-  if (geometries.length === 0) {
-    return [];
-  }
-
-  const center: Vec3 = [
-    (minX + maxX) / 2,
-    (minY + maxY) / 2,
-    (minZ + maxZ) / 2,
-  ];
-  const radius = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 0.001);
-  const scale = MODEL_RADIUS / radius;
-
-  return geometries.map(geometry => ({
-    ...geometry,
-    polygons: geometry.polygons.map(polygon => polygon.map(point => [
-      (point[0] - center[0]) * scale,
-      (point[1] - center[1]) * scale,
-      (point[2] - center[2]) * scale,
-    ] as Vec3)),
-  }));
 }
 
 export function buildMagicCube4DFrame(
@@ -321,8 +217,9 @@ export function buildMagicCube4DFrame(
 
       polygons.push({
         stickerIndex,
+        cubieIndex: DATA.sticker2Cubie[stickerIndex],
         faceIndex,
-        gripIndex: getPickGripForStickerPolygon(stickerIndex, polygonIndexWithinSticker),
+        gripIndex: stickerGripMap[stickerIndex],
         color: multiplyColor(faceColor, brightness),
         points: transformedPoints,
         depth,
@@ -373,30 +270,6 @@ export function mulRowVec4(vector: Vec4, matrix: Mat4): Vec4 {
   ];
 }
 
-export function chooseFaceRotationToCenter(currentView: Mat4, faceIndex: number): { axis: 0 | 1 | 2; angle: number } | null {
-  const center = mulRowVec4(getFaceCenter(faceIndex), currentView);
-  if (center[3] < -0.9) {
-    return null;
-  }
-
-  let best: { axis: 0 | 1 | 2; angle: number; score: number } | null = null;
-  for (const axis of [0, 1, 2] as const) {
-    if (Math.abs(center[axis]) < 0.2) {
-      continue;
-    }
-
-    for (const angle of [Math.PI / 2, -Math.PI / 2] as const) {
-      const rotated = mulRowVec4(center, buildRotationForAxis(axis, angle));
-      const score = (-rotated[3] * 10) - (Math.abs(rotated[0]) + Math.abs(rotated[1]) + Math.abs(rotated[2]));
-      if (!best || score > best.score) {
-        best = { axis, angle, score };
-      }
-    }
-  }
-
-  return best ? { axis: best.axis, angle: best.angle } : null;
-}
-
 export function createRotateFaceToCenterMatrix(currentView: Mat4, faceIndex: number, t: number): Mat4 | null {
   const faceCenter = getFaceCenter(faceIndex);
   const faceOnScreen = normalize4(mulRowVec4(faceCenter, currentView));
@@ -433,19 +306,6 @@ function getClosestGrip(pickCoords: Vec4, faceIndex: number, stickerIndex: numbe
   }
 
   return bestGrip;
-}
-
-function getClosestGripForPick(
-  pickCoords: Vec4,
-  faceIndex: number,
-  stickerIndex: number,
-  is2x2x2Cell: boolean,
-): number {
-  if (is2x2x2Cell) {
-    return findClosestGripCandidate(pickCoords, faceIndex, 2, false);
-  }
-
-  return getClosestGrip(pickCoords, faceIndex, stickerIndex);
 }
 
 function getClosestTwistGrip(pickCoords: Vec4, faceIndex: number, stickerIndex: number): number {
@@ -540,8 +400,8 @@ function buildFaceCenterStickerMap(): number[] {
 }
 
 function buildStickerGripMap(): number[] {
-  return DATA.stickerInds.map((sticker, stickerIndex) => {
-    const stickerCenter = averageIndexedVec4(sticker);
+  return DATA.stickerInds.map((_, stickerIndex) => {
+    const stickerCenter = DATA.stickerCenters[stickerIndex] as Vec4;
     return getClosestTwistGrip(
       stickerCenter,
       DATA.sticker2Face[stickerIndex],
@@ -578,83 +438,6 @@ function buildFaceTwistStickerMap(): number[] {
 
     return bestSticker;
   });
-}
-
-function averageIndexedVec4(polygons: number[][]): Vec4 {
-  let sumX = 0;
-  let sumY = 0;
-  let sumZ = 0;
-  let sumW = 0;
-  let count = 0;
-
-  for (const polygon of polygons) {
-    for (const vertexIndex of polygon) {
-      const vertex = DATA.standardStickerVertsAtRest[vertexIndex] as Vec4;
-      sumX += vertex[0];
-      sumY += vertex[1];
-      sumZ += vertex[2];
-      sumW += vertex[3];
-      count++;
-    }
-  }
-
-  return [
-    sumX / count,
-    sumY / count,
-    sumZ / count,
-    sumW / count,
-  ];
-}
-
-function averagePolygonVec4(polygon: number[]): Vec4 {
-  let sumX = 0;
-  let sumY = 0;
-  let sumZ = 0;
-  let sumW = 0;
-
-  for (const vertexIndex of polygon) {
-    const vertex = DATA.standardStickerVertsAtRest[vertexIndex] as Vec4;
-    sumX += vertex[0];
-    sumY += vertex[1];
-    sumZ += vertex[2];
-    sumW += vertex[3];
-  }
-
-  const count = polygon.length || 1;
-  return [
-    sumX / count,
-    sumY / count,
-    sumZ / count,
-    sumW / count,
-  ];
-}
-
-function is2x2x2Cell(polyCenter: Vec4, stickerCenter: Vec4, faceCenter: Vec4): boolean {
-  const epsilon = 0.1;
-  const c1 = distanceSquared(stickerCenter, faceCenter);
-  const c2 = distanceSquared(polyCenter, faceCenter);
-  return Math.abs(c1 - 0.75) < epsilon && Math.abs(c2 - 1.5) < epsilon;
-}
-
-function getPickGripForStickerPolygon(stickerIndex: number, polygonIndexWithinSticker: number): number {
-  return getStickerPolygonPickInfo(stickerIndex, polygonIndexWithinSticker).gripIndex;
-}
-
-function getStickerPolygonPickInfo(stickerIndex: number, polygonIndexWithinSticker: number): MagicCube4DPickInfo {
-  const faceIndex = DATA.sticker2Face[stickerIndex];
-  const sticker = DATA.stickerInds[stickerIndex];
-  const polygon = sticker[polygonIndexWithinSticker];
-  const stickerCenter = averageIndexedVec4(sticker);
-  const polyCenter = averagePolygonVec4(polygon);
-  const faceCenter = DATA.faceCenters[faceIndex] as Vec4;
-  const cellIs2x2x2 = is2x2x2Cell(polyCenter, stickerCenter, faceCenter);
-  const pickCenter = cellIs2x2x2 ? polyCenter : stickerCenter;
-
-  return {
-    stickerIndex,
-    faceIndex,
-    gripIndex: getClosestGripForPick(pickCenter, faceIndex, stickerIndex, cellIs2x2x2),
-  };
 }
 
 function getTwistMatrix(gripIndex: number, dir: 1 | -1, fraction: number): Mat4 {
@@ -751,27 +534,6 @@ function makeRowRotMatThatSlerps(fromInput: Vec4, toInput: Vec4, t: number): Mat
     transpose4(basis as Mat4),
     mulRowMat4(xyRot, basis as Mat4),
   );
-}
-
-function projectDisplayVertex(point: Vec4, display: FaceDisplayState, twistMat: Mat4 | null): Vec3 {
-  const twisted = twistMat ? mulRowVec4(point, twistMat) : point;
-  let projected = add3(display.center3d, display.offset3d);
-  const deltas: Vec4 = [
-    twisted[0] - display.center4d[0],
-    twisted[1] - display.center4d[1],
-    twisted[2] - display.center4d[2],
-    twisted[3] - display.center4d[3],
-  ];
-
-  for (const axis of [0, 1, 2, 3] as const) {
-    const basis = display.axisBasis[axis];
-    if (!basis) {
-      continue;
-    }
-    projected = add3(projected, scale3(basis, deltas[axis]));
-  }
-
-  return projected;
 }
 
 function isStickerInSliceMask(point: Vec4, sliceMask: number, cutNormal: Vec4, cutOffsets: readonly number[]): boolean {
@@ -904,16 +666,8 @@ function dot4(a: Vec4, b: Vec4): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
 }
 
-function add3(a: Vec3, b: Vec3): Vec3 {
-  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
-}
-
 function subtract3(a: Vec3, b: Vec3): Vec3 {
   return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-}
-
-function scale3(v: Vec3, scalar: number): Vec3 {
-  return [v[0] * scalar, v[1] * scalar, v[2] * scalar];
 }
 
 function cross3(a: Vec3, b: Vec3): Vec3 {
@@ -928,163 +682,12 @@ function dot3(a: Vec3, b: Vec3): number {
   return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
-function createFaceDisplayStates(
-  rotation4d: Mat4,
-  displayCameraW = DISPLAY_CAMERA_W,
-  faceSpacing = SIDE_EXPLODED_DISTANCE,
-): Map<number, FaceDisplayState> {
-  const entries = DATA.faceCenters.map((center, faceIndex) => {
-    const center4d = center as Vec4;
-    const rotatedCenter4d = mulRowVec4(center4d, rotation4d);
-    const projectedCenter3d = project4dTo3d([
-      rotatedCenter4d[0] * SCALE_4D,
-      rotatedCenter4d[1] * SCALE_4D,
-      rotatedCenter4d[2] * SCALE_4D,
-      rotatedCenter4d[3] * SCALE_4D,
-    ], displayCameraW);
-    const fixedAxis = faceFixedAxis(faceIndex);
-    const localAxes = ([0, 1, 2, 3] as const).filter(axis => axis !== fixedAxis) as Axis4[];
-    const rawBasis = localAxes.map(axis => projectAxisBasis(center4d, rotation4d, axis, displayCameraW)) as [Vec3, Vec3, Vec3];
-
-    return {
-      faceIndex,
-      center4d,
-      rotatedCenter4d,
-      projectedCenter3d,
-      localAxes,
-      rawBasis,
-    };
-  }).sort((a, b) => a.rotatedCenter4d[3] - b.rotatedCenter4d[3]);
-
-  const inner = entries[0];
-  const outerFace = entries[entries.length - 1]?.faceIndex;
-  const innerCenter = inner?.projectedCenter3d ?? [0, 0, 0] as Vec3;
-  const innerBasisLength = inner ? averageLength(inner.rawBasis) * INNER_CELL_SCALE : 1;
-  const result = new Map<number, FaceDisplayState>();
-
-  for (const entry of entries) {
-    const isInner = entry.faceIndex === inner?.faceIndex;
-    const targetLength = innerBasisLength * (isInner ? 1 : SIDE_CELL_SCALE / INNER_CELL_SCALE);
-    const rigidBasis = buildRigidBasis(entry.rawBasis, targetLength);
-    const axisBasis: Partial<Record<Axis4, Vec3>> = {};
-
-    for (let i = 0; i < entry.localAxes.length; i++) {
-      axisBasis[entry.localAxes[i]] = rigidBasis[i];
-    }
-
-    result.set(entry.faceIndex, {
-      center4d: entry.center4d,
-      center3d: entry.projectedCenter3d,
-      offset3d: explodeOffset(subtract3(entry.projectedCenter3d, innerCenter), isInner ? 0 : faceSpacing),
-      visible: entry.faceIndex !== outerFace,
-      axisBasis,
-    });
-  }
-
-  return result;
-}
-
-function faceFixedAxis(faceIndex: number): Axis4 {
-  const center = DATA.faceCenters[faceIndex];
-  let bestAxis: 0 | 1 | 2 | 3 = 0;
-  let bestValue = 0;
-
-  for (const axis of [0, 1, 2, 3] as const) {
-    const value = Math.abs(center[axis]);
-    if (value > bestValue) {
-      bestValue = value;
-      bestAxis = axis;
-    }
-  }
-
-  return bestAxis;
-}
-
-function projectAxisBasis(center4d: Vec4, rotation4d: Mat4, axis: Axis4, displayCameraW: number): Vec3 {
-  const unit = [0, 0, 0, 0] as Vec4;
-  unit[axis] = 1;
-  const plus = project4dTo3d(scale4(mulRowVec4(add4(center4d, unit), rotation4d), SCALE_4D), displayCameraW);
-  const minus = project4dTo3d(scale4(mulRowVec4(sub4(center4d, unit), rotation4d), SCALE_4D), displayCameraW);
-  return scale3(subtract3(plus, minus), 0.5);
-}
-
-function buildRigidBasis(rawBasis: [Vec3, Vec3, Vec3], targetLength: number): [Vec3, Vec3, Vec3] {
-  const first = normalize3(rawBasis[0]) ?? [1, 0, 0];
-  const secondBase = subtract3(rawBasis[1], scale3(first, dot3(rawBasis[1], first)));
-  const second = normalize3(secondBase)
-    ?? normalize3(perpendicular3(first))
-    ?? [0, 1, 0];
-  const thirdBase = subtract3(
-    subtract3(rawBasis[2], scale3(first, dot3(rawBasis[2], first))),
-    scale3(second, dot3(rawBasis[2], second)),
-  );
-  const third = normalize3(thirdBase)
-    ?? normalize3(cross3(first, second))
-    ?? [0, 0, 1];
-
-  return [
-    scale3(first, targetLength),
-    scale3(second, targetLength),
-    scale3(third, targetLength),
-  ];
-}
-
-function orientPolygon(points: Vec3[], referenceCenter: Vec3): Vec3[] {
-  if (points.length < 3) {
-    return points;
-  }
-
-  const polygonCenter = average3(points);
-  const normal = cross3(subtract3(points[1], points[0]), subtract3(points[2], points[0]));
-  const outward = subtract3(polygonCenter, referenceCenter);
-  return dot3(normal, outward) >= 0 ? points : [...points].reverse();
-}
-
-function average3(points: Vec3[]): Vec3 {
-  const inv = 1 / points.length;
-  return [
-    points.reduce((sum, point) => sum + point[0], 0) * inv,
-    points.reduce((sum, point) => sum + point[1], 0) * inv,
-    points.reduce((sum, point) => sum + point[2], 0) * inv,
-  ];
-}
-
-function averageLength(points: Vec3[]): number {
-  return points.reduce((sum, point) => sum + Math.hypot(point[0], point[1], point[2]), 0) / points.length;
-}
-
 function normalize3(v: Vec3): Vec3 | null {
   const length = Math.hypot(v[0], v[1], v[2]);
   if (length < 1e-5) {
     return null;
   }
   return [v[0] / length, v[1] / length, v[2] / length];
-}
-
-function perpendicular3(v: Vec3): Vec3 {
-  return Math.abs(v[0]) < 0.7 ? [0, -v[2], v[1]] : [-v[1], v[0], 0];
-}
-
-function explodeOffset(v: Vec3, magnitude: number): Vec3 {
-  if (magnitude <= 0) {
-    return [0, 0, 0];
-  }
-  const radial = normalizeScreenRadial(v);
-  return radial ? scale3(radial, magnitude) : [0, 0, 0];
-}
-
-function normalizeScreenRadial(v: Vec3): Vec3 | null {
-  const length = Math.hypot(v[0], v[1]);
-  if (length < 1e-5) {
-    return null;
-  }
-  return [v[0] / length, v[1] / length, 0];
-}
-
-function project4dTo3d(point: Vec4, cameraW: number): Vec3 {
-  const denominator = Math.max(cameraW - point[3], 0.35);
-  const scale = cameraW / denominator;
-  return [point[0] * scale, point[1] * scale, point[2] * scale];
 }
 
 function computeRestVerts(faceShrink: number, stickerShrink: number): Vec4[] {

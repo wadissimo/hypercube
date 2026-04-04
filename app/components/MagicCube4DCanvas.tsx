@@ -43,27 +43,6 @@ export default function MagicCube4DCanvas({
   const glRef = useRef<ExpoWebGLRenderingContext | null>(null);
   const frameRef = useRef<number | null>(null);
   const modelGroupRef = useRef<THREE.Group | null>(null);
-  const propsRef = useRef({
-    state,
-    viewMatrix,
-    zoom,
-    width,
-    height,
-    rotation4d,
-    twistAnimation,
-    settings,
-  });
-
-  propsRef.current = {
-    state,
-    viewMatrix,
-    zoom,
-    width,
-    height,
-    rotation4d,
-    twistAnimation,
-    settings,
-  };
 
   const frameData = useMemo(
     () => buildMagicCube4DFrame(
@@ -83,9 +62,8 @@ export default function MagicCube4DCanvas({
     const renderer = rendererRef.current;
     const camera = cameraRef.current;
     const gl = glRef.current;
-    const current = propsRef.current;
 
-    if (!renderer || !camera || current.width <= 0 || current.height <= 0) {
+    if (!renderer || !camera || width <= 0 || height <= 0) {
       return;
     }
 
@@ -97,15 +75,15 @@ export default function MagicCube4DCanvas({
     }
 
     camera.left = 0;
-    camera.right = current.width;
+    camera.right = width;
     camera.top = 0;
-    camera.bottom = current.height;
+    camera.bottom = height;
     camera.zoom = 1;
     camera.position.set(0, 0, 5);
     camera.lookAt(0, 0, 0);
     camera.updateProjectionMatrix();
     sceneRef.current?.updateMatrixWorld(true);
-  }, []);
+  }, [height, width]);
 
   const rebuildModel = useCallback(() => {
     const modelGroup = modelGroupRef.current;
@@ -184,6 +162,7 @@ export default function MagicCube4DCanvas({
       if (hitsPolygon([x, y], polygon.points)) {
         return {
           stickerIndex: polygon.stickerIndex,
+          cubieIndex: polygon.cubieIndex,
           faceIndex: polygon.faceIndex,
           gripIndex: polygon.gripIndex,
         };
@@ -202,11 +181,11 @@ export default function MagicCube4DCanvas({
 
   useLayoutEffect(() => {
     updateView();
-  }, [updateView, viewMatrix, zoom, width, height]);
+  }, [updateView]);
 
   useEffect(() => (
     () => {
-      if (frameRef.current) {
+      if (frameRef.current !== null) {
         cancelAnimationFrame(frameRef.current);
       }
       clearGroup(modelGroupRef.current);
@@ -214,7 +193,7 @@ export default function MagicCube4DCanvas({
     }
   ), []);
 
-  const handleContextCreate = useCallback(async (gl: ExpoWebGLRenderingContext) => {
+  const handleContextCreate = useCallback((gl: ExpoWebGLRenderingContext) => {
     glRef.current = gl;
 
     const renderer = new Renderer({
@@ -278,9 +257,6 @@ function clearGroup(group: THREE.Group | null) {
 
   while (group.children.length > 0) {
     const child = group.children[0];
-    if (!child) {
-      continue;
-    }
     group.remove(child);
 
     if ('geometry' in child && child.geometry instanceof THREE.BufferGeometry) {

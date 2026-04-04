@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   applyTwistToState,
   buildScrambledMagicCube4DState,
@@ -27,28 +27,19 @@ export function useMagicCube4D({
   const [baseView, setBaseView] = useState<Mat4>(MAGICCUBE4D_INITIAL_VIEW);
   const [canUndo, setCanUndo] = useState(false);
 
-  const stateRef = useRef(state);
   const twistFrameRef = useRef<number | null>(null);
   const viewFrameRef = useRef<number | null>(null);
   const historyRef = useRef<number[][]>([]);
 
-  stateRef.current = state;
-
   useEffect(() => (
     () => {
-      if (twistFrameRef.current) {
-        cancelAnimationFrame(twistFrameRef.current);
-      }
-      if (viewFrameRef.current) {
-        cancelAnimationFrame(viewFrameRef.current);
-      }
+      cancelFrame(twistFrameRef.current);
+      cancelFrame(viewFrameRef.current);
     }
   ), []);
 
-  const rotation4d = useMemo(() => baseView, [baseView]);
-
   const reset = useCallback(() => {
-    if (twistFrameRef.current) {
+    if (twistFrameRef.current || viewFrameRef.current) {
       return;
     }
     historyRef.current = [];
@@ -57,7 +48,7 @@ export function useMagicCube4D({
   }, []);
 
   const scramble = useCallback((length = 28) => {
-    if (twistFrameRef.current) {
+    if (twistFrameRef.current || viewFrameRef.current) {
       return;
     }
     historyRef.current = [];
@@ -161,10 +152,10 @@ export function useMagicCube4D({
     state,
     sliceMask,
     setSliceMask,
-    rotation4d,
+    rotation4d: baseView,
     twistAnimation,
     canUndo,
-    isAnimating: !!twistAnimation || !!viewFrameRef.current,
+    isAnimating: twistAnimation !== null || viewFrameRef.current !== null,
     reset,
     scramble,
     undo,
@@ -172,4 +163,10 @@ export function useMagicCube4D({
     twistSticker,
     rotateFaceToCenter,
   };
+}
+
+function cancelFrame(frame: number | null) {
+  if (frame !== null) {
+    cancelAnimationFrame(frame);
+  }
 }
