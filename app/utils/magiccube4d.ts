@@ -188,6 +188,10 @@ export function buildMagicCube4DFrame(
   const renderSettings = resolveRenderSettings(settings);
   const baseVerts = computeRestVerts(renderSettings.faceShrink, renderSettings.stickerShrink);
   const verts = applyPartialTwistToVerts(baseVerts, animation);
+  const stableProjected3d = baseVerts.map(vertex => rotateProjected3d(
+    project4dVertexTo3d(vertex, rotation4d, renderSettings.eyeW),
+    viewMatrix,
+  ));
   const projected3d = verts.map(vertex => rotateProjected3d(
     project4dVertexTo3d(vertex, rotation4d, renderSettings.eyeW),
     viewMatrix,
@@ -195,19 +199,15 @@ export function buildMagicCube4DFrame(
   const frontCulledStickers = buildFrontCellStickerSet(projected3d);
 
   let radius3d = 0;
-  for (const stickerIndex of frontCulledStickers) {
-    for (const polygon of DATA.stickerInds[stickerIndex]) {
-      for (const vertexIndex of polygon) {
-        const vertex = projected3d[vertexIndex];
-        radius3d = Math.max(radius3d, Math.hypot(vertex[0], vertex[1], vertex[2]));
-      }
-    }
+  for (const vertex of stableProjected3d) {
+    radius3d = Math.max(radius3d, Math.hypot(vertex[0], vertex[1], vertex[2]));
   }
 
   const minpix = Math.min(width, height);
   const polys2pixelsSF = minpix / (1.25 * Math.max(radius3d, 0.001));
   const viewScale = renderSettings.scaleFudge2d * polys2pixelsSF * zoomScale;
 
+  const stableVerts2d = stableProjected3d.map(project3dVertexTo2d);
   const verts2d = projected3d.map(project3dVertexTo2d);
   const sun = normalize3(DATA.sunVec as Vec3) ?? [0, 0, 1];
   let minProjectedX = Infinity;
@@ -215,7 +215,7 @@ export function buildMagicCube4DFrame(
   let minProjectedY = Infinity;
   let maxProjectedY = -Infinity;
 
-  for (const point of verts2d) {
+  for (const point of stableVerts2d) {
     minProjectedX = Math.min(minProjectedX, point[0]);
     maxProjectedX = Math.max(maxProjectedX, point[0]);
     minProjectedY = Math.min(minProjectedY, point[1]);
