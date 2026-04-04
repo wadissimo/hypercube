@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  applyCubeRotationToState,
   applyTwistToState,
   buildScrambledMagicCube4DState,
   createRotateFaceToCenterMatrix,
@@ -16,11 +17,13 @@ import {
 interface Params {
   twistDurationMs?: number;
   animationDurationMs?: number;
+  onStateCommit?: () => void;
 }
 
 export function useMagicCube4D({
   twistDurationMs = 260,
   animationDurationMs = 240,
+  onStateCommit,
 }: Params = {}) {
   const [state, setState] = useState<number[]>(createSolvedMagicCube4DState);
   const [sliceMask, setSliceMask] = useState(MAGICCUBE4D_DEFAULT_SLICE_MASK);
@@ -129,6 +132,7 @@ export function useMagicCube4D({
         setState(prev => {
           historyRef.current.push(prev);
           setCanUndo(true);
+          onStateCommit?.();
           return applyTwistToState(prev, gripIndex, dir, sliceMask);
         });
         setTwistAnimation(null);
@@ -143,11 +147,24 @@ export function useMagicCube4D({
       progress: 0,
     });
     twistFrameRef.current = requestAnimationFrame(tick);
-  }, [sliceMask, twistDurationMs]);
+  }, [onStateCommit, sliceMask, twistDurationMs]);
 
   const twistSticker = useCallback((stickerIndex: number | null, dir: MagicCube4DTwistDirection) => {
     twistGrip(stickerIndex == null ? null : getStickerGripIndex(stickerIndex), dir);
   }, [twistGrip]);
+
+  const rotateState = useCallback((axisIndex: 0 | 1 | 2, dir: -1 | 1) => {
+    if (viewFrameRef.current || twistFrameRef.current) {
+      return;
+    }
+
+    setState(prev => {
+      historyRef.current.push(prev);
+      setCanUndo(true);
+      onStateCommit?.();
+      return applyCubeRotationToState(prev, axisIndex, dir);
+    });
+  }, [onStateCommit]);
 
   return {
     state,
@@ -163,6 +180,7 @@ export function useMagicCube4D({
     twistGrip,
     twistSticker,
     rotateFaceToCenter,
+    rotateState,
   };
 }
 

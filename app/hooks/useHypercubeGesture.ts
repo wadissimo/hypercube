@@ -44,6 +44,12 @@ export function useHypercubeGesture({
     forceRender();
   }, [initialViewMatrix, onViewMatrixChange, viewPitchDeg, viewYawDeg]);
 
+  const commitViewMatrix = (nextViewMatrix: Mat3) => {
+    viewMatrix.current = cloneMat3(nextViewMatrix);
+    onViewMatrixChange?.(viewMatrix.current);
+    forceRender();
+  };
+
   const panGesture = Gesture.Pan()
     .runOnJS(true)
     .onBegin(() => {
@@ -55,9 +61,7 @@ export function useHypercubeGesture({
       prevTranslation.current = [event.translationX, event.translationY];
       const sensitivity = BASE_SENSITIVITY * dragSensitivity;
       const delta = mulMat(rotX(-dy * sensitivity), rotY(-dx * sensitivity));
-      viewMatrix.current = mulMat(delta, viewMatrix.current);
-      onViewMatrixChange?.(viewMatrix.current);
-      forceRender();
+      commitViewMatrix(mulMat(delta, viewMatrix.current));
     });
 
   const pinchGesture = Gesture.Pinch()
@@ -105,10 +109,22 @@ export function useHypercubeGesture({
   const pressGestures = Gesture.Exclusive(doubleTapGesture, longTapGesture, tapGesture);
   const gesture = Gesture.Simultaneous(panGesture, pinchGesture, pressGestures);
 
+  const rotateView = (axisIndex: 0 | 1 | 2, dir: -1 | 1) => {
+    const angle = dir * (Math.PI / 2);
+    const delta = axisIndex === 0
+      ? rotX(angle)
+      : axisIndex === 1
+        ? rotY(angle)
+        : rotZ(angle);
+    commitViewMatrix(mulMat(delta, viewMatrix.current));
+  };
+
   return {
     viewMatrix: viewMatrix.current,
     zoom: zoom.current,
     gesture,
+    rotateView,
+    setViewMatrix: commitViewMatrix,
   };
 }
 

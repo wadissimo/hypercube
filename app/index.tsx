@@ -22,6 +22,7 @@ import { useMagicCube4D } from './hooks/useMagicCube4D';
 import { useTwistAnimation } from './hooks/useTwistAnimation';
 import {
   getFaceTwistAxisOptions,
+  type MagicCube4DFaceAxisOption,
   type MagicCube4DPickInfo,
   MAGICCUBE4D_FACE_COLORS,
   MAGICCUBE4D_FACE_LABELS,
@@ -47,7 +48,13 @@ const FACE_SELECTION_ROWS = [
   [4, 5],
   [6, 7],
 ] as const;
+const GLOBAL_4D_AXIS_OPTIONS = [
+  { axisIndex: 0 },
+  { axisIndex: 1 },
+  { axisIndex: 2 },
+] as const;
 type ScreenMode = 'cube' | 'hypercube';
+type HypercubeAction = { type: 'state' } | { type: 'view'; previousViewMatrix: Mat3 };
 
 export default function Index() {
   const { width } = useWindowDimensions();
@@ -57,12 +64,14 @@ export default function Index() {
   const [cubeCanUndo, setCubeCanUndo] = useState(false);
   const [scrambleText, setScrambleText] = useState('');
   const [canvasSize, setCanvasSize] = useState({ width, height: 0 });
-  const [selected4DFace, setSelected4DFace] = useState(4);
+  const [selected4DFace, setSelected4DFace] = useState<number | null>(null);
   const [magicCube4DSettingsOpen, setMagicCube4DSettingsOpen] = useState(false);
   const [magicCube4DSettings, setMagicCube4DSettings] = useState(DEFAULT_MAGICCUBE4D_SETTINGS);
   const [saved4DViewMatrix, setSaved4DViewMatrix] = useState<Mat3 | null>(null);
   const cubeHistoryRef = useRef<CubeState[]>([]);
   const current4DViewMatrixRef = useRef<Mat3 | null>(null);
+  const hypercubeHistoryRef = useRef<HypercubeAction[]>([]);
+  const [hypercubeCanUndo, setHypercubeCanUndo] = useState(false);
   const { twistAnim, twist } = useTwistAnimation(setCubeState, previousState => {
     cubeHistoryRef.current.push(previousState);
     setCubeCanUndo(true);
@@ -73,23 +82,32 @@ export default function Index() {
     setSliceMask,
     rotation4d,
     twistAnimation: magicCube4DTwistAnimation,
-    canUndo: magicCube4DCanUndo,
     isAnimating: magicCube4DAnimating,
     reset: resetMagicCube4D,
     scramble: scrambleMagicCube4D,
     undo: undoMagicCube4D,
     twistGrip,
     rotateFaceToCenter,
+    rotateState,
   } = useMagicCube4D({
     twistDurationMs: magicCube4DSettings.twistDurationMs,
     animationDurationMs: magicCube4DSettings.animationDurationMs,
+    onStateCommit: () => {
+      hypercubeHistoryRef.current.push({ type: 'state' });
+      setHypercubeCanUndo(true);
+    },
   });
   const magicCube4DPickRef = useRef<(x: number, y: number) => MagicCube4DPickInfo | null>(() => null);
   const selected4DAxisOptions = useMemo(
-    () =>
-      [...getFaceTwistAxisOptions(selected4DFace)].sort(
+    () => {
+      if (selected4DFace == null) {
+        return GLOBAL_4D_AXIS_OPTIONS;
+      }
+
+      return [...getFaceTwistAxisOptions(selected4DFace)].sort(
         (left, right) => left.axisIndex - right.axisIndex,
-      ),
+      );
+    },
     [selected4DFace],
   );
   const cubeDisabled = !!twistAnim || mode !== 'cube';
@@ -99,6 +117,9 @@ export default function Index() {
   });
   const select4DFace = useCallback((faceIndex: number) => {
     setSelected4DFace(faceIndex);
+  }, []);
+  const toggle4DFace = useCallback((faceIndex: number) => {
+    setSelected4DFace(current => (current === faceIndex ? null : faceIndex));
   }, []);
 
   const handleHypercubeDoubleTap = useCallback((point: [number, number]) => {
@@ -186,12 +207,17 @@ export default function Index() {
       return;
     }
 
+    hypercubeHistoryRef.current = [];
+    setHypercubeCanUndo(false);
+    setSelected4DFace(null);
     resetMagicCube4D();
   };
 
   const handleScramble = () => {
     if (actionDisabled) return;
     if (mode === 'hypercube') {
+      hypercubeHistoryRef.current = [];
+      setHypercubeCanUndo(false);
       scrambleMagicCube4D();
       return;
     }
@@ -217,12 +243,35 @@ export default function Index() {
       return;
     }
 
-    undoMagicCube4D();
+    const previousAction = hypercubeHistoryRef.current.pop();
+    if (!previousAction) {
+      return;
+    }
+
+    if (previousAction.type === 'view') {
+      previewGesture.setViewMatrix(previousAction.previousViewMatrix);
+    } else {
+      undoMagicCube4D();
+    }
+
+    setHypercubeCanUndo(hypercubeHistoryRef.current.length > 0);
   };
 
-  const handle4DControlTwist = (gripIndex: number, dir: -1 | 1 | 2) => {
-    twistGrip(gripIndex, dir);
-  };
+  const handle4DControlPress = useCallback((
+    option: Pick<MagicCube4DFaceAxisOption, 'axisIndex' | 'gripIndex' | 'oppositeGripIndex'> | { axisIndex: 0 | 1 | 2 },
+    dir: -1 | 1,
+  ) => {
+    if (selected4DFace == null) {
+      rotateState(option.axisIndex, dir);
+      return;
+    }
+
+    if (!('gripIndex' in option) || !('oppositeGripIndex' in option)) {
+      return;
+    }
+
+    twistGrip(dir < 0 ? option.oppositeGripIndex : option.gripIndex, 1);
+  }, [rotateState, selected4DFace, twistGrip]);
 
   return (
     <GestureHandlerRootView style={styles.root}>
@@ -275,7 +324,7 @@ export default function Index() {
                 icon="arrow-undo"
                 label="Undo"
                 onPress={handleUndo}
-                disabled={mode === 'cube' ? !cubeCanUndo || !!twistAnim : !magicCube4DCanUndo || magicCube4DAnimating}
+                disabled={mode === 'cube' ? !cubeCanUndo || !!twistAnim : !hypercubeCanUndo || magicCube4DAnimating}
               />
               <ActionButton
                 icon="refresh"
@@ -394,7 +443,7 @@ export default function Index() {
                                 selected4DFace === faceIndex && styles.faceChipActive,
                                 pressed && !magicCube4DAnimating && styles.faceChipPressed,
                               ]}
-                              onPress={() => select4DFace(faceIndex)}
+                              onPress={() => toggle4DFace(faceIndex)}
                               disabled={magicCube4DAnimating}
                             >
                               <Text style={styles.faceChipText}>
@@ -415,12 +464,12 @@ export default function Index() {
                         >
                           <CompactControlButton
                             label={AXIS_TARGET_LABELS[option.axisIndex][0]}
-                            onPress={() => handle4DControlTwist(option.oppositeGripIndex, 1)}
+                            onPress={() => handle4DControlPress(option, -1)}
                             disabled={magicCube4DAnimating}
                           />
                           <CompactControlButton
                             label={AXIS_TARGET_LABELS[option.axisIndex][1]}
-                            onPress={() => handle4DControlTwist(option.gripIndex, 1)}
+                            onPress={() => handle4DControlPress(option, 1)}
                             disabled={magicCube4DAnimating}
                           />
                         </View>

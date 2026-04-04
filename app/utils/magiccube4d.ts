@@ -75,6 +75,7 @@ const numColorsByCubie = buildNumColorsByCubie();
 const vertexToSticker = buildVertexToSticker();
 const faceCenterStickerMap = buildFaceCenterStickerMap();
 const twistDestinationCache = new Map<string, number[]>();
+const cubeRotationDestinationCache = new Map<string, number[]>();
 const stickerGripMap = buildStickerGripMap();
 const faceTwistStickerMap = buildFaceTwistStickerMap();
 const faceTwistAxisMap = buildFaceTwistAxisMap();
@@ -165,6 +166,21 @@ export function applyTwistToState(
       continue;
     }
 
+    next[destinations[stickerIndex]] = state[stickerIndex];
+  }
+
+  return next;
+}
+
+export function applyCubeRotationToState(
+  state: number[],
+  axisIndex: 0 | 1 | 2,
+  dir: -1 | 1,
+): number[] {
+  const destinations = getCubeRotationDestinations(axisIndex, dir);
+  const next = [...state];
+
+  for (let stickerIndex = 0; stickerIndex < state.length; stickerIndex++) {
     next[destinations[stickerIndex]] = state[stickerIndex];
   }
 
@@ -580,6 +596,36 @@ function getTwistDestinations(gripIndex: number, dir: MagicCube4DTwistDirection)
   }
 
   twistDestinationCache.set(key, destinations);
+  return destinations;
+}
+
+function getCubeRotationDestinations(axisIndex: 0 | 1 | 2, dir: -1 | 1): number[] {
+  const key = `${axisIndex}:${dir}`;
+  const cached = cubeRotationDestinationCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const rotation = buildRotationForAxis(axisIndex, dir * (Math.PI / 2));
+  const destinations = DATA.stickerCenters.map((center, stickerIndex) => (
+    findClosestStickerIndex(
+      mulRowVec4(center as Vec4, rotation),
+      stickerIndex,
+      axisIndex,
+      dir,
+    )
+  ));
+
+  const seen = new Set<number>();
+  for (let stickerIndex = 0; stickerIndex < destinations.length; stickerIndex++) {
+    const destination = destinations[stickerIndex];
+    if (seen.has(destination)) {
+      throw new Error(`Duplicate destination ${destination} for axis ${axisIndex} dir ${dir}`);
+    }
+    seen.add(destination);
+  }
+
+  cubeRotationDestinationCache.set(key, destinations);
   return destinations;
 }
 
