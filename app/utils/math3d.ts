@@ -33,6 +33,14 @@ export function mulVec(m: Mat3, v: Vec3): Vec3 {
   ];
 }
 
+export function cloneMat3(matrix: Mat3): Mat3 {
+  return [
+    [...matrix[0]] as Vec3,
+    [...matrix[1]] as Vec3,
+    [...matrix[2]] as Vec3,
+  ];
+}
+
 export function project(p: Vec3, fov: number, dist: number, cx: number, cy: number): Vec2 {
   const scale = fov / (dist + p[2]);
   return [cx + p[0] * scale, cy - p[1] * scale];

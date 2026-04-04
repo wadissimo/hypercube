@@ -9,6 +9,7 @@ import {
   getStickerGripIndex,
   MAGICCUBE4D_DEFAULT_SLICE_MASK,
   MAGICCUBE4D_INITIAL_VIEW,
+  type MagicCube4DTwistDirection,
   type MagicCube4DTwistAnimation,
   type Mat4,
 } from '../utils/magiccube4d';
@@ -102,7 +103,7 @@ export function useMagicCube4D({
     viewFrameRef.current = requestAnimationFrame(tick);
   }, [animationDurationMs, baseView]);
 
-  const twistGrip = useCallback((gripIndex: number | null, dir: 1 | -1) => {
+  const twistGrip = useCallback((gripIndex: number | null, dir: MagicCube4DTwistDirection) => {
     if (gripIndex == null || twistFrameRef.current || viewFrameRef.current) {
       return;
     }
@@ -144,7 +145,7 @@ export function useMagicCube4D({
     twistFrameRef.current = requestAnimationFrame(tick);
   }, [sliceMask, twistDurationMs]);
 
-  const twistSticker = useCallback((stickerIndex: number | null, dir: 1 | -1) => {
+  const twistSticker = useCallback((stickerIndex: number | null, dir: MagicCube4DTwistDirection) => {
     twistGrip(stickerIndex == null ? null : getStickerGripIndex(stickerIndex), dir);
   }, [twistGrip]);
 

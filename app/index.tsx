@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { View, StyleSheet, useWindowDimensions, Pressable, Text } from 'react-native';
 import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,8 +21,7 @@ import { useHypercubeGesture } from './hooks/useHypercubeGesture';
 import { useMagicCube4D } from './hooks/useMagicCube4D';
 import { useTwistAnimation } from './hooks/useTwistAnimation';
 import {
-  getFaceCenterStickerIndex,
-  getFaceTwistStickerIndex,
+  getFaceTwistAxisOptions,
   type MagicCube4DPickInfo,
   MAGICCUBE4D_FACE_COLORS,
   MAGICCUBE4D_FACE_LABELS,
@@ -33,8 +32,21 @@ import {
   clampMagicCube4DSettings,
   DEFAULT_MAGICCUBE4D_SETTINGS,
 } from './utils/magiccube4dSettings';
+import { cloneMat3, type Mat3 } from './utils/math3d';
 
 const SCRAMBLE_MOVES = 20;
+const AXIS_TARGET_LABELS = [
+  ['x-', 'x+'],
+  ['y-', 'y+'],
+  ['z-', 'z+'],
+  ['w-', 'w+'],
+] as const;
+const FACE_SELECTION_ROWS = [
+  [0, 1],
+  [2, 3],
+  [4, 5],
+  [6, 7],
+] as const;
 type ScreenMode = 'cube' | 'hypercube';
 
 export default function Index() {
@@ -44,11 +56,13 @@ export default function Index() {
   const [cubeState, setCubeState] = useState(() => createSolvedCube(3));
   const [cubeCanUndo, setCubeCanUndo] = useState(false);
   const [scrambleText, setScrambleText] = useState('');
-  const [canvasHeight, setCanvasHeight] = useState(0);
+  const [canvasSize, setCanvasSize] = useState({ width, height: 0 });
   const [selected4DFace, setSelected4DFace] = useState(4);
   const [magicCube4DSettingsOpen, setMagicCube4DSettingsOpen] = useState(false);
   const [magicCube4DSettings, setMagicCube4DSettings] = useState(DEFAULT_MAGICCUBE4D_SETTINGS);
+  const [saved4DViewMatrix, setSaved4DViewMatrix] = useState<Mat3 | null>(null);
   const cubeHistoryRef = useRef<CubeState[]>([]);
+  const current4DViewMatrixRef = useRef<Mat3 | null>(null);
   const { twistAnim, twist } = useTwistAnimation(setCubeState, previousState => {
     cubeHistoryRef.current.push(previousState);
     setCubeCanUndo(true);
@@ -65,39 +79,52 @@ export default function Index() {
     scramble: scrambleMagicCube4D,
     undo: undoMagicCube4D,
     twistGrip,
-    twistSticker,
     rotateFaceToCenter,
   } = useMagicCube4D({
     twistDurationMs: magicCube4DSettings.twistDurationMs,
     animationDurationMs: magicCube4DSettings.animationDurationMs,
   });
   const magicCube4DPickRef = useRef<(x: number, y: number) => MagicCube4DPickInfo | null>(() => null);
+  const selected4DAxisOptions = useMemo(
+    () =>
+      [...getFaceTwistAxisOptions(selected4DFace)].sort(
+        (left, right) => left.axisIndex - right.axisIndex,
+      ),
+    [selected4DFace],
+  );
   const cubeDisabled = !!twistAnim || mode !== 'cube';
   const cubeGesture = useCubeGesture({
-    cubeState, cubeSize, width, height: canvasHeight,
+    cubeState, cubeSize, width: canvasSize.width, height: canvasSize.height,
     onTwist: twist, disabled: cubeDisabled,
   });
+  const select4DFace = useCallback((faceIndex: number) => {
+    setSelected4DFace(faceIndex);
+  }, []);
+
   const handleHypercubeDoubleTap = useCallback((point: [number, number]) => {
     const pickInfo = magicCube4DPickRef.current(point[0], point[1]);
     if (pickInfo) {
-      setSelected4DFace(pickInfo.faceIndex);
+      select4DFace(pickInfo.faceIndex);
     }
     rotateFaceToCenter(pickInfo?.stickerIndex ?? null);
-  }, [rotateFaceToCenter]);
+  }, [rotateFaceToCenter, select4DFace]);
   const handleHypercubeTap = useCallback((point: [number, number]) => {
     const pickInfo = magicCube4DPickRef.current(point[0], point[1]);
     if (pickInfo) {
-      setSelected4DFace(pickInfo.faceIndex);
+      select4DFace(pickInfo.faceIndex);
     }
     twistGrip(pickInfo?.gripIndex ?? null, 1);
-  }, [twistGrip]);
+  }, [select4DFace, twistGrip]);
   const handleHypercubeLongTap = useCallback((point: [number, number]) => {
     const pickInfo = magicCube4DPickRef.current(point[0], point[1]);
     if (pickInfo) {
-      setSelected4DFace(pickInfo.faceIndex);
+      select4DFace(pickInfo.faceIndex);
     }
     twistGrip(pickInfo?.gripIndex ?? null, -1);
-  }, [twistGrip]);
+  }, [select4DFace, twistGrip]);
+  const handle4DViewMatrixChange = useCallback((nextViewMatrix: Mat3) => {
+    current4DViewMatrixRef.current = cloneMat3(nextViewMatrix);
+  }, []);
   const previewGesture = useHypercubeGesture({
     onTap: handleHypercubeTap,
     onLongTap: handleHypercubeLongTap,
@@ -105,6 +132,8 @@ export default function Index() {
     dragSensitivity: magicCube4DSettings.dragSensitivity,
     viewPitchDeg: magicCube4DSettings.viewPitchDeg,
     viewYawDeg: magicCube4DSettings.viewYawDeg,
+    initialViewMatrix: saved4DViewMatrix ?? undefined,
+    onViewMatrixChange: handle4DViewMatrixChange,
     disabled: magicCube4DAnimating,
   });
 
@@ -133,6 +162,19 @@ export default function Index() {
     }
     setMagicCube4DSettingsOpen(true);
   };
+  const handleUseCurrent4DView = useCallback(() => {
+    const currentViewMatrix = current4DViewMatrixRef.current;
+    if (!currentViewMatrix) {
+      return;
+    }
+    setSaved4DViewMatrix(cloneMat3(currentViewMatrix));
+  }, []);
+  const handleRestoreSaved4DView = useCallback(() => {
+    setSaved4DViewMatrix(current => (current ? cloneMat3(current) : current));
+  }, []);
+  const handleClearSaved4DView = useCallback(() => {
+    setSaved4DViewMatrix(null);
+  }, []);
 
   const handleReset = () => {
     if (actionDisabled) return;
@@ -178,12 +220,8 @@ export default function Index() {
     undoMagicCube4D();
   };
 
-  const handle4DControlTwist = (dir: 1 | -1) => {
-    twistSticker(getFaceTwistStickerIndex(selected4DFace), dir);
-  };
-
-  const handle4DControlCenter = () => {
-    rotateFaceToCenter(getFaceCenterStickerIndex(selected4DFace));
+  const handle4DControlTwist = (gripIndex: number, dir: -1 | 1 | 2) => {
+    twistGrip(gripIndex, dir);
   };
 
   return (
@@ -254,7 +292,7 @@ export default function Index() {
             >
               {mode === 'cube'
                 ? scrambleText
-                : `Magic Cube 4D  •  tap CCW  •  hold CW  •  slices ${MAGICCUBE4D_SLICE_LABELS[sliceMask]}`}
+                : `Magic Cube 4D  •  tap CCW  •  hold CW  •  dbl tap center  •  slices ${MAGICCUBE4D_SLICE_LABELS[sliceMask]}`}
             </Text>
             <View style={styles.actionGroup}>
               {mode === 'hypercube' && (
@@ -276,7 +314,14 @@ export default function Index() {
           <GestureDetector gesture={activeGesture.gesture}>
             <View
               style={styles.canvas}
-              onLayout={e => setCanvasHeight(e.nativeEvent.layout.height)}
+              onLayout={e => {
+                const { width: nextWidth, height: nextHeight } = e.nativeEvent.layout;
+                setCanvasSize(current => (
+                  current.width === nextWidth && current.height === nextHeight
+                    ? current
+                    : { width: nextWidth, height: nextHeight }
+                ));
+              }}
             >
               {mode === 'cube' ? (
                 <CubeCanvas
@@ -285,16 +330,16 @@ export default function Index() {
                   viewMatrix={activeGesture.viewMatrix}
                   zoom={activeGesture.zoom}
                   twistAnim={twistAnim}
-                  width={width}
-                  height={canvasHeight}
+                  width={canvasSize.width}
+                  height={canvasSize.height}
                 />
               ) : (
                 <MagicCube4DCanvas
                   state={magicCube4DState}
                   viewMatrix={activeGesture.viewMatrix}
                   zoom={activeGesture.zoom}
-                  width={width}
-                  height={canvasHeight}
+                  width={canvasSize.width}
+                  height={canvasSize.height}
                   rotation4d={rotation4d}
                   twistAnimation={magicCube4DTwistAnimation}
                   settings={magicCube4DSettings}
@@ -335,38 +380,53 @@ export default function Index() {
                 })}
               </View>
               <View style={styles.bottomControls}>
-                <View style={styles.facePickerRow}>
-                  {MAGICCUBE4D_FACE_LABELS.map((label, faceIndex) => (
-                    <Pressable
-                      key={label}
-                      style={[
-                        styles.faceChip,
-                        { backgroundColor: MAGICCUBE4D_FACE_COLORS[faceIndex] },
-                        selected4DFace === faceIndex && styles.faceChipActive,
-                      ]}
-                      onPress={() => setSelected4DFace(faceIndex)}
-                      disabled={magicCube4DAnimating}
-                    >
-                      <Text style={styles.faceChipText}>{label}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <View style={styles.bottomActionRow}>
-                  <BottomControlButton
-                    label="Center"
-                    onPress={handle4DControlCenter}
-                    disabled={magicCube4DAnimating}
-                  />
-                  <BottomControlButton
-                    label="CCW"
-                    onPress={() => handle4DControlTwist(1)}
-                    disabled={magicCube4DAnimating}
-                  />
-                  <BottomControlButton
-                    label="CW"
-                    onPress={() => handle4DControlTwist(-1)}
-                    disabled={magicCube4DAnimating}
-                  />
+                <View style={styles.bottomControlSplit}>
+                  <View style={[styles.controlPanel, styles.faceControlPanel]}>
+                    <View style={styles.facePickerColumn}>
+                      {FACE_SELECTION_ROWS.map(row => (
+                        <View key={row.join('-')} style={styles.faceChipRow}>
+                          {row.map(faceIndex => (
+                            <Pressable
+                              key={MAGICCUBE4D_FACE_LABELS[faceIndex]}
+                              style={({ pressed }) => [
+                                styles.faceChip,
+                                { backgroundColor: MAGICCUBE4D_FACE_COLORS[faceIndex] },
+                                selected4DFace === faceIndex && styles.faceChipActive,
+                                pressed && !magicCube4DAnimating && styles.faceChipPressed,
+                              ]}
+                              onPress={() => select4DFace(faceIndex)}
+                              disabled={magicCube4DAnimating}
+                            >
+                              <Text style={styles.faceChipText}>
+                                {MAGICCUBE4D_FACE_LABELS[faceIndex]}
+                              </Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                  <View style={[styles.controlPanel, styles.turnControlPanel]}>
+                    <View style={styles.turnButtonColumn}>
+                      {selected4DAxisOptions.map(option => (
+                        <View
+                          key={`${selected4DFace}-${option.axisIndex}`}
+                          style={styles.turnButtonPair}
+                        >
+                          <CompactControlButton
+                            label={AXIS_TARGET_LABELS[option.axisIndex][0]}
+                            onPress={() => handle4DControlTwist(option.oppositeGripIndex, 1)}
+                            disabled={magicCube4DAnimating}
+                          />
+                          <CompactControlButton
+                            label={AXIS_TARGET_LABELS[option.axisIndex][1]}
+                            onPress={() => handle4DControlTwist(option.gripIndex, 1)}
+                            disabled={magicCube4DAnimating}
+                          />
+                        </View>
+                      ))}
+                    </View>
+                  </View>
                 </View>
               </View>
             </View>
@@ -374,9 +434,24 @@ export default function Index() {
           <MagicCube4DSettingsSheet
             visible={magicCube4DSettingsOpen}
             settings={magicCube4DSettings}
-            onChange={(nextSettings) => setMagicCube4DSettings(clampMagicCube4DSettings(nextSettings))}
+            onChange={(nextSettings) => {
+              if (
+                nextSettings.viewPitchDeg !== magicCube4DSettings.viewPitchDeg ||
+                nextSettings.viewYawDeg !== magicCube4DSettings.viewYawDeg
+              ) {
+                setSaved4DViewMatrix(null);
+              }
+              setMagicCube4DSettings(clampMagicCube4DSettings(nextSettings));
+            }}
+            onUseCurrentView={handleUseCurrent4DView}
+            onRestoreSavedView={handleRestoreSaved4DView}
+            onClearSavedView={handleClearSaved4DView}
+            hasSavedView={saved4DViewMatrix !== null}
             onClose={() => setMagicCube4DSettingsOpen(false)}
-            onReset={() => setMagicCube4DSettings(DEFAULT_MAGICCUBE4D_SETTINGS)}
+            onReset={() => {
+              setSaved4DViewMatrix(null);
+              setMagicCube4DSettings(DEFAULT_MAGICCUBE4D_SETTINGS);
+            }}
           />
         </SafeAreaView>
       </BottomSheetModalProvider>
@@ -409,24 +484,24 @@ function ActionButton({ icon, label, onPress, disabled }: ActionButtonProps) {
   );
 }
 
-interface BottomControlButtonProps {
+interface CompactControlButtonProps {
   label: string;
   onPress: () => void;
   disabled: boolean;
 }
 
-function BottomControlButton({ label, onPress, disabled }: BottomControlButtonProps) {
+function CompactControlButton({ label, onPress, disabled }: CompactControlButtonProps) {
   return (
     <Pressable
       style={({ pressed }) => [
-        styles.bottomControlButton,
+        styles.compactControlButton,
         disabled && styles.actionButtonDisabled,
         pressed && !disabled && styles.actionButtonPressed,
       ]}
       onPress={onPress}
       disabled={disabled}
     >
-      <Text style={styles.bottomControlButtonText}>{label}</Text>
+      <Text style={styles.compactControlButtonText}>{label}</Text>
     </Pressable>
   );
 }
@@ -563,26 +638,57 @@ const styles = StyleSheet.create({
     color: '#f5f7ff',
   },
   bottomControls: {
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
+    gap: 8,
+  },
+  bottomControlSplit: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
     gap: 10,
   },
-  facePickerRow: {
+  controlPanel: {
+    flex: 1,
+    gap: 8,
+  },
+  faceControlPanel: {
+    flex: 0.95,
+  },
+  turnControlPanel: {
+    flex: 1.05,
+  },
+  facePickerColumn: {
+    gap: 8,
+  },
+  faceChipRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    gap: 8,
+  },
+  turnButtonColumn: {
+    gap: 8,
+    justifyContent: 'center',
+    flex: 1,
+  },
+  turnButtonPair: {
+    flexDirection: 'row',
     justifyContent: 'center',
     gap: 8,
   },
   faceChip: {
-    minWidth: 48,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 999,
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 9,
+    borderRadius: 14,
     borderWidth: 2,
-    borderColor: 'transparent',
+    borderColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
   },
   faceChipActive: {
     borderColor: '#f5f7ff',
+    transform: [{ scale: 1.03 }],
+  },
+  faceChipPressed: {
+    opacity: 0.92,
   },
   faceChipText: {
     color: '#111111',
@@ -590,25 +696,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textTransform: 'uppercase',
   },
-  bottomActionRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 10,
-  },
-  bottomControlButton: {
-    minWidth: 88,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+  compactControlButton: {
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
     borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
+    borderColor: 'rgba(255,255,255,0.14)',
     alignItems: 'center',
   },
-  bottomControlButtonText: {
+  compactControlButtonText: {
     color: '#f5f7ff',
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '800',
+    textTransform: 'uppercase',
   },
   actionButton: {
     width: 40,

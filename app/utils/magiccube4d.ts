@@ -8,10 +8,12 @@ type Axis4 = 0 | 1 | 2 | 3;
 
 export interface MagicCube4DTwistAnimation {
   gripIndex: number;
-  dir: 1 | -1;
+  dir: MagicCube4DTwistDirection;
   sliceMask: number;
   progress: number;
 }
+
+export type MagicCube4DTwistDirection = -1 | 1 | 2;
 
 export interface MagicCube4DFramePolygon {
   stickerIndex: number;
@@ -34,12 +36,20 @@ export interface MagicCube4DPickInfo {
   gripIndex: number;
 }
 
+export interface MagicCube4DFaceAxisOption {
+  axisIndex: number;
+  label: string;
+  gripIndex: number;
+  oppositeGripIndex: number;
+}
+
 const DATA = MAGICCUBE4D_HYPERCUBE_DATA;
 const SCALE_4D = 1 / DATA.circumRadius;
 const EPSILON = 1e-6;
 const ROW_ROT_AXIS_A: 2 = 2;
 const ROW_ROT_AXIS_B: 3 = 3;
 const SCALE_FUDGE_2D = 4.7;
+const AXIS_LABELS = ['X', 'Y', 'Z', 'W'] as const;
 
 export const MAGICCUBE4D_DEFAULT_SLICE_MASK = 1;
 export const MAGICCUBE4D_SLICE_BITS = [1, 2, 4] as const;
@@ -53,7 +63,12 @@ export const MAGICCUBE4D_SLICE_LABELS: Record<number, string> = {
   7: '1+2+3',
 };
 export const MAGICCUBE4D_FACE_COLORS = DATA.defaultFaceColors;
-export const MAGICCUBE4D_INITIAL_VIEW = DATA.niceView as Mat4;
+export const MAGICCUBE4D_INITIAL_VIEW: Mat4 = [
+  [0.732, -0.19573138881189647, 0.6515682319408275, -0.044419168826872364],
+  [0.681, 0.1867437229991053, -0.7055188782884173, 0.04677493237928689],
+  [0.016, 0.9616802419686545, 0.2722676817639113, 0.036199746877780305],
+  [0, -0.052335956242943835, 0.052264231633826735, 0.9972609476841365],
+];
 export const MAGICCUBE4D_FACE_LABELS = ['w-', 'z-', 'y-', 'x-', 'x+', 'y+', 'z+', 'w+'] as const;
 
 const numColorsByCubie = buildNumColorsByCubie();
@@ -62,6 +77,7 @@ const faceCenterStickerMap = buildFaceCenterStickerMap();
 const twistDestinationCache = new Map<string, number[]>();
 const stickerGripMap = buildStickerGripMap();
 const faceTwistStickerMap = buildFaceTwistStickerMap();
+const faceTwistAxisMap = buildFaceTwistAxisMap();
 
 export function createSolvedMagicCube4DState(): number[] {
   return [...DATA.sticker2Face];
@@ -85,6 +101,10 @@ export function getFaceCenterStickerIndex(faceIndex: number): number {
 
 export function getFaceTwistStickerIndex(faceIndex: number): number {
   return faceTwistStickerMap[faceIndex];
+}
+
+export function getFaceTwistAxisOptions(faceIndex: number): readonly MagicCube4DFaceAxisOption[] {
+  return faceTwistAxisMap[faceIndex] ?? [];
 }
 
 export function getFaceCenter(faceIndex: number): Vec4 {
@@ -128,7 +148,7 @@ export function buildScrambledMagicCube4DState(length: number): number[] {
 export function applyTwistToState(
   state: number[],
   gripIndex: number,
-  dir: 1 | -1,
+  dir: MagicCube4DTwistDirection,
   sliceMask: number,
 ): number[] {
   const normalizedMask = normalizeSliceMask(sliceMask);
@@ -185,13 +205,27 @@ export function buildMagicCube4DFrame(
   }
 
   const minpix = Math.min(width, height);
-  const xOff = (width > height ? (width - height) / 2 : 0) + minpix / 2;
-  const yOff = (height > width ? (height - width) / 2 : 0) + minpix / 2;
   const polys2pixelsSF = minpix / (1.25 * Math.max(radius3d, 0.001));
   const viewScale = renderSettings.scaleFudge2d * polys2pixelsSF * zoomScale;
 
   const verts2d = projected3d.map(project3dVertexTo2d);
   const sun = normalize3(DATA.sunVec as Vec3) ?? [0, 0, 1];
+  let minProjectedX = Infinity;
+  let maxProjectedX = -Infinity;
+  let minProjectedY = Infinity;
+  let maxProjectedY = -Infinity;
+
+  for (const point of verts2d) {
+    minProjectedX = Math.min(minProjectedX, point[0]);
+    maxProjectedX = Math.max(maxProjectedX, point[0]);
+    minProjectedY = Math.min(minProjectedY, point[1]);
+    maxProjectedY = Math.max(maxProjectedY, point[1]);
+  }
+
+  const projectedCenterX = (minProjectedX + maxProjectedX) / 2;
+  const projectedCenterY = (minProjectedY + maxProjectedY) / 2;
+  const xOff = width / 2 - projectedCenterX * viewScale;
+  const yOff = height / 2 + projectedCenterY * viewScale;
 
   const polygons: MagicCube4DFramePolygon[] = [];
 
@@ -440,7 +474,76 @@ function buildFaceTwistStickerMap(): number[] {
   });
 }
 
-function getTwistMatrix(gripIndex: number, dir: 1 | -1, fraction: number): Mat4 {
+function buildFaceTwistAxisMap(): MagicCube4DFaceAxisOption[][] {
+  return DATA.faceCenters.map((_, faceIndex) => {
+    const fixedAxis = getFaceFixedAxis(faceIndex);
+    const optionsByAxis = new Map<number, { positive: number | null; negative: number | null }>();
+
+    for (let gripIndex = 0; gripIndex < DATA.gripCenters.length; gripIndex++) {
+      if (DATA.grip2Face[gripIndex] !== faceIndex || DATA.gripSymmetryOrders[gripIndex] !== 4) {
+        continue;
+      }
+
+      const gripCenter = DATA.gripCenters[gripIndex];
+      const axisIndex = getGripAxisIndex(gripCenter, fixedAxis);
+      const entry = optionsByAxis.get(axisIndex) ?? { positive: null, negative: null };
+
+      if (gripCenter[axisIndex] > 0) {
+        entry.positive = gripIndex;
+      } else {
+        entry.negative = gripIndex;
+      }
+
+      optionsByAxis.set(axisIndex, entry);
+    }
+
+    return [...optionsByAxis.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([axisIndex, entry]) => {
+        if (entry.positive == null || entry.negative == null) {
+          throw new Error(`Incomplete twist axis ${axisIndex} for face ${faceIndex}`);
+        }
+
+        return {
+          axisIndex,
+          label: AXIS_LABELS[axisIndex],
+          gripIndex: entry.positive,
+          oppositeGripIndex: entry.negative,
+        };
+      });
+  });
+}
+
+function getFaceFixedAxis(faceIndex: number): number {
+  const faceCenter = DATA.faceCenters[faceIndex];
+  let bestAxis = 0;
+  let bestValue = 0;
+
+  for (let axisIndex = 0; axisIndex < faceCenter.length; axisIndex++) {
+    const value = Math.abs(faceCenter[axisIndex]);
+    if (value > bestValue) {
+      bestAxis = axisIndex;
+      bestValue = value;
+    }
+  }
+
+  return bestAxis;
+}
+
+function getGripAxisIndex(gripCenter: readonly number[], fixedAxis: number): number {
+  for (let axisIndex = 0; axisIndex < gripCenter.length; axisIndex++) {
+    if (axisIndex === fixedAxis) {
+      continue;
+    }
+    if (Math.abs(gripCenter[axisIndex]) > 0.5) {
+      return axisIndex;
+    }
+  }
+
+  throw new Error(`Unable to resolve twist axis for fixed axis ${fixedAxis}`);
+}
+
+function getTwistMatrix(gripIndex: number, dir: MagicCube4DTwistDirection, fraction: number): Mat4 {
   const order = DATA.gripSymmetryOrders[gripIndex];
   const angle = dir * ((2 * Math.PI) / order) * fraction;
   const useful = DATA.gripUsefulMats[gripIndex] as Mat4;
@@ -455,7 +558,7 @@ function getNumSlicesForGrip(gripIndex: number): number {
   return DATA.faceCutOffsets[faceIndex].length + 1;
 }
 
-function getTwistDestinations(gripIndex: number, dir: 1 | -1): number[] {
+function getTwistDestinations(gripIndex: number, dir: MagicCube4DTwistDirection): number[] {
   const key = `${gripIndex}:${dir}`;
   const cached = twistDestinationCache.get(key);
   if (cached) {
@@ -480,7 +583,7 @@ function getTwistDestinations(gripIndex: number, dir: 1 | -1): number[] {
   return destinations;
 }
 
-function findClosestStickerIndex(target: Vec4, stickerIndex: number, gripIndex: number, dir: 1 | -1): number {
+function findClosestStickerIndex(target: Vec4, stickerIndex: number, gripIndex: number, dir: MagicCube4DTwistDirection): number {
   let bestIndex = -1;
   let bestDistance = Infinity;
 

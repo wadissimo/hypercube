@@ -26,3 +26,20 @@ Current history uses short, imperative commit subjects (`Initial commit`, `empty
 
 ## Configuration Notes
 Do not commit secrets or machine-specific environment files. If you touch native configuration under `android/` or `ios/`, document why in the PR because those changes are harder to review than changes under `app/`.
+
+## No Guessing
+No guessing.
+No guessing.
+No guessing.
+
+For numeric view, geometry, camera, projection, picking, or interaction tuning:
+- Do not tune by eyeballing screenshots.
+- Do not tune by “trying a few angles”.
+- Do not infer exact matrices or parameters from a single screenshot unless the derivation is mathematically well-posed and explicitly shown.
+- Derive values from source data, instrumented runtime state, optimization with a defined objective, or direct user-provided exact values.
+- If the problem is underdetermined, say that clearly and use an exact capture/export path instead of guessing.
+
+Cube centering rule:
+- The cube must remain centered in the actual measured canvas.
+- Use the real laid out canvas size, not assumed window dimensions, when computing render placement or picking.
+- Keep the render origin stable during interaction and animation; do not dynamically recenter per frame from visible polygons unless that behavior is explicitly required and mathematically justified.

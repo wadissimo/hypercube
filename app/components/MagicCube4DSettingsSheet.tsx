@@ -14,6 +14,10 @@ interface Props {
   visible: boolean;
   settings: MagicCube4DSettings;
   onChange: (settings: MagicCube4DSettings) => void;
+  onUseCurrentView: () => void;
+  onRestoreSavedView: () => void;
+  onClearSavedView: () => void;
+  hasSavedView: boolean;
   onClose: () => void;
   onReset: () => void;
 }
@@ -133,6 +137,10 @@ export default function MagicCube4DSettingsSheet({
   visible,
   settings,
   onChange,
+  onUseCurrentView,
+  onRestoreSavedView,
+  onClearSavedView,
+  hasSavedView,
   onClose,
   onReset,
 }: Props) {
@@ -192,6 +200,33 @@ export default function MagicCube4DSettingsSheet({
         contentContainerStyle={styles.contentInner}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.captureSection}>
+          <Text style={styles.sectionTitle}>Exact View</Text>
+          <Text style={styles.captureCopy}>
+            Save or restore the live 3D view matrix exactly. No angle guessing.
+          </Text>
+          <View style={styles.captureActions}>
+            <Pressable style={styles.captureButton} onPress={onUseCurrentView}>
+              <Text style={styles.captureButtonText}>Use Current View</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.captureButton, !hasSavedView && styles.captureButtonDisabled]}
+              onPress={onRestoreSavedView}
+              disabled={!hasSavedView}
+            >
+              <Text style={styles.captureButtonText}>Restore Saved</Text>
+            </Pressable>
+          </View>
+          <Pressable
+            style={[styles.clearCaptureButton, !hasSavedView && styles.clearCaptureButtonDisabled]}
+            onPress={onClearSavedView}
+            disabled={!hasSavedView}
+          >
+            <Text style={styles.clearCaptureButtonText}>
+              {hasSavedView ? 'Clear Saved View' : 'No Saved View'}
+            </Text>
+          </Pressable>
+        </View>
         {SECTIONS.map(section => (
           <View key={section.title} style={styles.section}>
             <Text style={styles.sectionTitle}>{section.title}</Text>
@@ -286,6 +321,58 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 16,
     gap: 18,
+  },
+  captureSection: {
+    gap: 10,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  captureCopy: {
+    color: 'rgba(245,247,255,0.72)',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  captureActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  captureButton: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.14)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  captureButtonDisabled: {
+    opacity: 0.45,
+  },
+  captureButtonText: {
+    color: '#f5f7ff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  clearCaptureButton: {
+    minHeight: 38,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  clearCaptureButtonDisabled: {
+    opacity: 0.45,
+  },
+  clearCaptureButtonText: {
+    color: 'rgba(245,247,255,0.8)',
+    fontSize: 12,
+    fontWeight: '600',
   },
   section: {
     gap: 10,

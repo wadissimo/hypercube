@@ -1,12 +1,13 @@
 import { useEffect, useReducer, useRef } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import type { Mat3 } from '../utils/math3d';
-import { mulMat, rotX, rotY } from '../utils/math3d';
+import { cloneMat3, mulMat, rotX, rotY, rotZ } from '../utils/math3d';
 
 const BASE_SENSITIVITY = 0.006;
 const INITIAL_ZOOM = 0.62;
 const MIN_ZOOM = 0.35;
 const MAX_ZOOM = 1.9;
+const DEFAULT_VIEW_ROLL_DEG = 60;
 
 interface Params {
   onTap: (point: [number, number]) => void;
@@ -15,6 +16,8 @@ interface Params {
   dragSensitivity?: number;
   viewPitchDeg?: number;
   viewYawDeg?: number;
+  initialViewMatrix?: Mat3;
+  onViewMatrixChange?: (viewMatrix: Mat3) => void;
   disabled?: boolean;
 }
 
@@ -23,20 +26,23 @@ export function useHypercubeGesture({
   onLongTap,
   onDoubleTap,
   dragSensitivity = 1,
-  viewPitchDeg = 33,
-  viewYawDeg = -36,
+  viewPitchDeg = 51,
+  viewYawDeg = 2,
+  initialViewMatrix,
+  onViewMatrixChange,
   disabled = false,
 }: Params) {
-  const viewMatrix = useRef<Mat3>(createViewMatrix(viewPitchDeg, viewYawDeg));
+  const viewMatrix = useRef<Mat3>(cloneMat3(initialViewMatrix ?? createViewMatrix(viewPitchDeg, viewYawDeg)));
   const prevTranslation = useRef<[number, number]>([0, 0]);
   const zoom = useRef(INITIAL_ZOOM);
   const pinchStartZoom = useRef(INITIAL_ZOOM);
   const [, forceRender] = useReducer((value: number) => value + 1, 0);
 
   useEffect(() => {
-    viewMatrix.current = createViewMatrix(viewPitchDeg, viewYawDeg);
+    viewMatrix.current = cloneMat3(initialViewMatrix ?? createViewMatrix(viewPitchDeg, viewYawDeg));
+    onViewMatrixChange?.(viewMatrix.current);
     forceRender();
-  }, [viewPitchDeg, viewYawDeg]);
+  }, [initialViewMatrix, onViewMatrixChange, viewPitchDeg, viewYawDeg]);
 
   const panGesture = Gesture.Pan()
     .runOnJS(true)
@@ -50,6 +56,7 @@ export function useHypercubeGesture({
       const sensitivity = BASE_SENSITIVITY * dragSensitivity;
       const delta = mulMat(rotX(-dy * sensitivity), rotY(-dx * sensitivity));
       viewMatrix.current = mulMat(delta, viewMatrix.current);
+      onViewMatrixChange?.(viewMatrix.current);
       forceRender();
     });
 
@@ -110,7 +117,10 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function createViewMatrix(viewPitchDeg: number, viewYawDeg: number): Mat3 {
-  return mulMat(rotX(toRadians(viewPitchDeg)), rotY(toRadians(viewYawDeg)));
+  return mulMat(
+    rotZ(toRadians(DEFAULT_VIEW_ROLL_DEG)),
+    mulMat(rotX(toRadians(viewPitchDeg)), rotY(toRadians(viewYawDeg))),
+  );
 }
 
 function toRadians(degrees: number): number {
