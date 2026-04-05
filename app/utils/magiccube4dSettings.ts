@@ -8,6 +8,7 @@ export interface MagicCube4DSettings {
   projection4d: number;
   faceSpacing: number;
   stickerSpacing: number;
+  shadowLight: number;
 }
 
 export const DEFAULT_MAGICCUBE4D_SETTINGS: MagicCube4DSettings = {
@@ -20,6 +21,7 @@ export const DEFAULT_MAGICCUBE4D_SETTINGS: MagicCube4DSettings = {
   projection4d: 1,
   faceSpacing: 1,
   stickerSpacing: 1,
+  shadowLight: 0.32,
 };
 
 export function clampMagicCube4DSettings(settings: MagicCube4DSettings): MagicCube4DSettings {
@@ -33,6 +35,7 @@ export function clampMagicCube4DSettings(settings: MagicCube4DSettings): MagicCu
     projection4d: clamp(settings.projection4d, 0.6, 1.6),
     faceSpacing: clamp(settings.faceSpacing, 0.7, 1.6),
     stickerSpacing: clamp(settings.stickerSpacing, 0.7, 1.6),
+    shadowLight: clamp(settings.shadowLight, 0, 0.65),
   };
 }
 

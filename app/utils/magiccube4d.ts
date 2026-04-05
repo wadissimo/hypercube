@@ -262,6 +262,7 @@ export function buildMagicCube4DFrame(
   const stableVerts2d = stableProjected3d.map(project3dVertexTo2d);
   const verts2d = projected3d.map(project3dVertexTo2d);
   const sun = normalize3(DATA.sunVec as Vec3) ?? [0, 0, 1];
+  const ambientLight = renderSettings.ambientLight;
   let minProjectedX = Infinity;
   let maxProjectedX = -Infinity;
   let minProjectedY = Infinity;
@@ -291,7 +292,7 @@ export function buildMagicCube4DFrame(
         continue;
       }
 
-      const brightness = computePolygonBrightness(projected3d, polygon, sun);
+      const brightness = computePolygonBrightness(projected3d, polygon, sun, ambientLight);
       const transformedPoints = polygon.map(vertexIndex => {
         const point = verts2d[vertexIndex];
         return [
@@ -1023,12 +1024,14 @@ function resolveRenderSettings(settings?: MagicCube4DSettings): {
   stickerShrink: number;
   eyeW: number;
   scaleFudge2d: number;
+  ambientLight: number;
 } {
   return {
     faceShrink: DATA.faceShrink * (settings?.faceSpacing ?? 1),
     stickerShrink: DATA.stickerShrink / (settings?.stickerSpacing ?? 1),
     eyeW: DATA.eyeW * (settings?.projection4d ?? 1),
     scaleFudge2d: SCALE_FUDGE_2D * (settings?.projectionScale ?? 1),
+    ambientLight: settings?.shadowLight ?? 0.32,
   };
 }
 
@@ -1055,12 +1058,18 @@ function isFrontFacing2dPolygon(verts: Vec4[], polygon: number[]): boolean {
   return area > 0;
 }
 
-function computePolygonBrightness(verts: Vec4[], polygon: number[], sun: Vec3): number {
+function computePolygonBrightness(
+  verts: Vec4[],
+  polygon: number[],
+  sun: Vec3,
+  ambientLight: number,
+): number {
   const v0 = toVec3(verts[polygon[0]]);
   const v1 = toVec3(verts[polygon[1]]);
   const v2 = toVec3(verts[polygon[2]]);
   const normal = normalize3(cross3(subtract3(v1, v0), subtract3(v2, v0))) ?? [0, 0, 1];
-  return Math.max(dot3(normal, sun), 0);
+  const direct = Math.max(dot3(normal, sun), 0);
+  return ambientLight + direct * (1 - ambientLight);
 }
 
 function averageDepth(verts: Vec4[], polygon: number[]): number {

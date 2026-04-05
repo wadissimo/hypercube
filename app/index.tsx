@@ -55,7 +55,8 @@ const GLOBAL_4D_AXIS_OPTIONS = [
 ] as const;
 type ScreenMode = 'cube' | 'hypercube';
 type HypercubeAction = { type: 'state' } | { type: 'view'; previousViewMatrix: Mat3 };
-type HypercubeRotationMode = '4d' | '3d';
+type HypercubeRotationMode = '4d' | '3d' | null;
+const DEFAULT_HYPERCUBE_ROTATION_MODE: Exclude<HypercubeRotationMode, null> = '4d';
 
 export default function Index() {
   const { width } = useWindowDimensions();
@@ -67,13 +68,14 @@ export default function Index() {
   const [cubeCanvasSize, setCubeCanvasSize] = useState({ width, height: 0 });
   const [hypercubeCanvasSize, setHypercubeCanvasSize] = useState({ width, height: 0 });
   const [selected4DFace, setSelected4DFace] = useState<number | null>(null);
-  const [hypercubeRotationMode, setHypercubeRotationMode] = useState<HypercubeRotationMode>('4d');
+  const [hypercubeRotationMode, setHypercubeRotationMode] = useState<HypercubeRotationMode>(DEFAULT_HYPERCUBE_ROTATION_MODE);
   const [magicCube4DSettingsOpen, setMagicCube4DSettingsOpen] = useState(false);
   const [magicCube4DSettings, setMagicCube4DSettings] = useState(DEFAULT_MAGICCUBE4D_SETTINGS);
   const [saved4DViewMatrix, setSaved4DViewMatrix] = useState<Mat3 | null>(null);
   const cubeHistoryRef = useRef<CubeState[]>([]);
   const current4DViewMatrixRef = useRef<Mat3 | null>(null);
   const hypercubeHistoryRef = useRef<HypercubeAction[]>([]);
+  const lastTurnSliceMaskRef = useRef(MAGICCUBE4D_SLICE_BITS[0]);
   const [hypercubeCanUndo, setHypercubeCanUndo] = useState(false);
   const { twistAnim, twist } = useTwistAnimation(setCubeState, previousState => {
     cubeHistoryRef.current.push(previousState);
@@ -119,12 +121,42 @@ export default function Index() {
     cubeState, cubeSize, width: cubeCanvasSize.width, height: cubeCanvasSize.height,
     onTwist: twist, disabled: cubeDisabled,
   });
+  const activateDefaultRotationMode = useCallback(() => {
+    setHypercubeRotationMode(DEFAULT_HYPERCUBE_ROTATION_MODE);
+    setSelected4DFace(null);
+    setSliceMask(mask => {
+      if (mask !== 0) {
+        lastTurnSliceMaskRef.current = mask;
+      }
+      return 0;
+    });
+  }, [setSliceMask]);
   const select4DFace = useCallback((faceIndex: number) => {
+    if (hypercubeRotationMode !== null) {
+      setHypercubeRotationMode(null);
+      setSliceMask(mask => {
+        const restoredMask = mask === 0 ? lastTurnSliceMaskRef.current : mask;
+        lastTurnSliceMaskRef.current = restoredMask;
+        return restoredMask;
+      });
+    }
     setSelected4DFace(faceIndex);
-  }, []);
+  }, [hypercubeRotationMode, setSliceMask]);
   const toggle4DFace = useCallback((faceIndex: number) => {
-    setSelected4DFace(current => (current === faceIndex ? null : faceIndex));
-  }, []);
+    if (selected4DFace === faceIndex) {
+      activateDefaultRotationMode();
+      return;
+    }
+    if (hypercubeRotationMode !== null) {
+      setHypercubeRotationMode(null);
+      setSliceMask(mask => {
+        const restoredMask = mask === 0 ? lastTurnSliceMaskRef.current : mask;
+        lastTurnSliceMaskRef.current = restoredMask;
+        return restoredMask;
+      });
+    }
+    setSelected4DFace(faceIndex);
+  }, [activateDefaultRotationMode, hypercubeRotationMode, selected4DFace, setSliceMask]);
 
   const handleHypercubeDoubleTap = useCallback((point: [number, number]) => {
     const pickInfo = magicCube4DPickRef.current(point[0], point[1]);
@@ -215,7 +247,9 @@ export default function Index() {
 
     hypercubeHistoryRef.current = [];
     setHypercubeCanUndo(false);
+    setHypercubeRotationMode(DEFAULT_HYPERCUBE_ROTATION_MODE);
     setSelected4DFace(null);
+    setSliceMask(0);
     resetMagicCube4D();
   };
 
@@ -224,6 +258,9 @@ export default function Index() {
     if (mode === 'hypercube') {
       hypercubeHistoryRef.current = [];
       setHypercubeCanUndo(false);
+      setHypercubeRotationMode(DEFAULT_HYPERCUBE_ROTATION_MODE);
+      setSelected4DFace(null);
+      setSliceMask(0);
       scrambleMagicCube4D();
       return;
     }
@@ -268,6 +305,9 @@ export default function Index() {
     dir: -1 | 1,
   ) => {
     if (selected4DFace == null) {
+      if (hypercubeRotationMode === null) {
+        return;
+      }
       if (hypercubeRotationMode === '4d') {
         rotateState(option.axisIndex, dir);
       } else {
@@ -282,6 +322,27 @@ export default function Index() {
 
     twistGrip(dir < 0 ? option.oppositeGripIndex : option.gripIndex, 1);
   }, [hypercubeRotationMode, rotateSpatialState, rotateState, selected4DFace, twistGrip]);
+  const handleSliceButtonPress = useCallback((bit: number) => {
+    setHypercubeRotationMode(null);
+    setSelected4DFace(null);
+    setSliceMask(mask => {
+      const sourceMask = mask === 0 ? lastTurnSliceMaskRef.current : mask;
+      const nextMask = (sourceMask ^ bit) & 0b111;
+      const resolvedMask = nextMask === 0 ? bit : nextMask;
+      lastTurnSliceMaskRef.current = resolvedMask;
+      return resolvedMask;
+    });
+  }, [setSliceMask]);
+  const handleRotationModePress = useCallback((nextMode: Exclude<HypercubeRotationMode, null>) => {
+    setHypercubeRotationMode(nextMode);
+    setSelected4DFace(null);
+    setSliceMask(mask => {
+      if (mask !== 0) {
+        lastTurnSliceMaskRef.current = mask;
+      }
+      return 0;
+    });
+  }, [setSliceMask]);
 
   return (
     <GestureHandlerRootView style={styles.root}>
@@ -351,7 +412,7 @@ export default function Index() {
             >
               {mode === 'cube'
                 ? scrambleText
-                : `Magic Cube 4D  •  tap CCW  •  hold CW  •  dbl tap center  •  slices ${MAGICCUBE4D_SLICE_LABELS[sliceMask]}`}
+                : `Magic Cube 4D  •  tap CCW  •  hold CW  •  dbl tap center  •  slices ${sliceMask === 0 ? 'off' : MAGICCUBE4D_SLICE_LABELS[sliceMask]}`}
             </Text>
             <View style={styles.actionGroup}>
               {mode === 'hypercube' && (
@@ -430,10 +491,7 @@ export default function Index() {
                         styles.sliceButton,
                         active && styles.sliceButtonActive,
                       ]}
-                      onPress={() => setSliceMask(mask => {
-                        const nextMask = (mask ^ bit) & 0b111;
-                        return nextMask === 0 ? bit : nextMask;
-                      })}
+                      onPress={() => handleSliceButtonPress(bit)}
                       disabled={magicCube4DAnimating}
                     >
                       <Text style={[
@@ -451,7 +509,7 @@ export default function Index() {
                     styles.sliceButton,
                     hypercubeRotationMode === '4d' && styles.sliceButtonActive,
                   ]}
-                  onPress={() => setHypercubeRotationMode('4d')}
+                  onPress={() => handleRotationModePress('4d')}
                   disabled={magicCube4DAnimating}
                 >
                   <Text
@@ -468,7 +526,7 @@ export default function Index() {
                     styles.sliceButton,
                     hypercubeRotationMode === '3d' && styles.sliceButtonActive,
                   ]}
-                  onPress={() => setHypercubeRotationMode('3d')}
+                  onPress={() => handleRotationModePress('3d')}
                   disabled={magicCube4DAnimating}
                 >
                   <Text
@@ -518,12 +576,12 @@ export default function Index() {
                           <CompactControlButton
                             label={AXIS_TARGET_LABELS[option.axisIndex][0]}
                             onPress={() => handle4DControlPress(option, -1)}
-                            disabled={magicCube4DAnimating}
+                            disabled={magicCube4DAnimating || (selected4DFace == null && hypercubeRotationMode === null)}
                           />
                           <CompactControlButton
                             label={AXIS_TARGET_LABELS[option.axisIndex][1]}
                             onPress={() => handle4DControlPress(option, 1)}
-                            disabled={magicCube4DAnimating}
+                            disabled={magicCube4DAnimating || (selected4DFace == null && hypercubeRotationMode === null)}
                           />
                         </View>
                       ))}

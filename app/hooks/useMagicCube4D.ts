@@ -9,7 +9,6 @@ import {
   hasValidTwist,
   getStickerFaceIndex,
   getStickerGripIndex,
-  MAGICCUBE4D_DEFAULT_SLICE_MASK,
   MAGICCUBE4D_INITIAL_VIEW,
   type MagicCube4DAnimation,
   type MagicCube4DTwistDirection,
@@ -27,7 +26,7 @@ export function useMagicCube4D({
   onStateCommit,
 }: Params = {}) {
   const [state, setState] = useState<number[]>(createSolvedMagicCube4DState);
-  const [sliceMask, setSliceMask] = useState(MAGICCUBE4D_DEFAULT_SLICE_MASK);
+  const [sliceMask, setSliceMask] = useState(0);
   const [twistAnimation, setTwistAnimation] = useState<MagicCube4DAnimation | null>(null);
   const [baseView, setBaseView] = useState<Mat4>(MAGICCUBE4D_INITIAL_VIEW);
   const [canUndo, setCanUndo] = useState(false);

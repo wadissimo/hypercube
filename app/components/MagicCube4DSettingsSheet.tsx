@@ -131,6 +131,19 @@ const SECTIONS: { title: string; items: SettingSpec[] }[] = [
       },
     ],
   },
+  {
+    title: 'Lighting',
+    items: [
+      {
+        key: 'shadowLight',
+        label: 'Shadow light',
+        step: 0.04,
+        min: 0,
+        max: 0.65,
+        format: value => `${Math.round(value * 100)}%`,
+      },
+    ],
+  },
 ];
 
 export default function MagicCube4DSettingsSheet({
