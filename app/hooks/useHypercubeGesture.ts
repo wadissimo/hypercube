@@ -32,14 +32,14 @@ export function useHypercubeGesture({
   onViewMatrixChange,
   disabled = false,
 }: Params) {
-  const viewMatrix = useRef<Mat3>(cloneMat3(initialViewMatrix ?? createViewMatrix(viewPitchDeg, viewYawDeg)));
+  const viewMatrix = useRef<Mat3>(cloneMat3(initialViewMatrix ?? createHypercubeViewMatrix(viewPitchDeg, viewYawDeg)));
   const prevTranslation = useRef<[number, number]>([0, 0]);
   const zoom = useRef(INITIAL_ZOOM);
   const pinchStartZoom = useRef(INITIAL_ZOOM);
   const [, forceRender] = useReducer((value: number) => value + 1, 0);
 
   useEffect(() => {
-    viewMatrix.current = cloneMat3(initialViewMatrix ?? createViewMatrix(viewPitchDeg, viewYawDeg));
+    viewMatrix.current = cloneMat3(initialViewMatrix ?? createHypercubeViewMatrix(viewPitchDeg, viewYawDeg));
     onViewMatrixChange?.(viewMatrix.current);
     forceRender();
   }, [initialViewMatrix, onViewMatrixChange, viewPitchDeg, viewYawDeg]);
@@ -132,7 +132,7 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function createViewMatrix(viewPitchDeg: number, viewYawDeg: number): Mat3 {
+export function createHypercubeViewMatrix(viewPitchDeg: number, viewYawDeg: number): Mat3 {
   return mulMat(
     rotZ(toRadians(DEFAULT_VIEW_ROLL_DEG)),
     mulMat(rotX(toRadians(viewPitchDeg)), rotY(toRadians(viewYawDeg))),
