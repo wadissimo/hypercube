@@ -606,6 +606,14 @@ function getTwistMatrix(gripIndex: number, dir: MagicCube4DTwistDirection, fract
   );
 }
 
+export function getGripTwistMatrix(
+  gripIndex: number,
+  dir: MagicCube4DTwistDirection,
+  fraction: number,
+): Mat4 {
+  return getTwistMatrix(gripIndex, dir, fraction);
+}
+
 function getNumSlicesForGrip(gripIndex: number): number {
   const faceIndex = DATA.grip2Face[gripIndex];
   return DATA.faceCutOffsets[faceIndex].length + 1;
@@ -787,6 +795,10 @@ function buildSpatialRotationForAxis(axisIndex: 0 | 1 | 2, angle: number): Mat4 
     case 2:
       return planeRotation4Row(0, 1, angle);
   }
+}
+
+export function getSpatialRotationMatrix(axisIndex: 0 | 1 | 2, angle: number): Mat4 {
+  return buildSpatialRotationForAxis(axisIndex, angle);
 }
 
 function transpose4(matrix: Mat4): Mat4 {

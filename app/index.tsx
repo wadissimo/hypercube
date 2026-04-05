@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { View, StyleSheet, Pressable, Text } from 'react-native';
 import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,10 +21,14 @@ import { createHypercubeViewMatrix } from './hooks/useHypercubeGesture';
 import { useMagicCube4D } from './hooks/useMagicCube4D';
 import { useTwistAnimation } from './hooks/useTwistAnimation';
 import {
+  getFaceCenter,
   getFaceCenterStickerIndex,
+  getGripTwistMatrix,
   getFaceTwistAxisOptions,
-  type MagicCube4DFaceAxisOption,
+  getSpatialRotationMatrix,
+  mulRowVec4,
   type MagicCube4DPickInfo,
+  type MagicCube4DTwistDirection,
   MAGICCUBE4D_FACE_COLORS,
   MAGICCUBE4D_FACE_LABELS,
   MAGICCUBE4D_SLICE_BITS,
@@ -34,26 +38,48 @@ import {
   clampMagicCube4DSettings,
   DEFAULT_MAGICCUBE4D_SETTINGS,
 } from './utils/magiccube4dSettings';
-import { cloneMat3, type Mat3 } from './utils/math3d';
+import { MAGICCUBE4D_HYPERCUBE_DATA } from './utils/magiccube4dData';
+import { cloneMat3, mulVec, type Mat3 } from './utils/math3d';
 
 const SCRAMBLE_MOVES = 20;
-const AXIS_TARGET_LABELS = [
-  ['x-', 'x+'],
-  ['y-', 'y+'],
-  ['z-', 'z+'],
-  ['w-', 'w+'],
+const GRIP_FACE_GRID_ROWS = [
+  [6, 4, 5],
+  [7, null, 0],
+  [2, 3, 1],
 ] as const;
-const FACE_SELECTION_ROWS = [
-  [0, 1],
-  [2, 3],
-  [4, 5],
-  [6, 7],
-] as const;
+const GRIP_FACE_BUTTON_LABELS: Record<number, string> = {
+  0: 'I',
+  1: 'R',
+  2: 'F',
+  3: 'D',
+  4: 'U',
+  5: 'B',
+  6: 'L',
+  7: 'O',
+};
 const GLOBAL_4D_AXIS_OPTIONS = [
   { axisIndex: 0 },
   { axisIndex: 1 },
   { axisIndex: 2 },
 ] as const;
+const ROTATION_ROW_LABELS = ['X', 'Y', 'Z'] as const;
+const MAGICCUBE4D_SCALE_4D = 1 / MAGICCUBE4D_HYPERCUBE_DATA.circumRadius;
+const MAGICCUBE4D_EYE_W = MAGICCUBE4D_HYPERCUBE_DATA.eyeW;
+const AXIS_SAMPLE_OFFSET = 0.2;
+const FACE_PROBE_OFFSETS = [0.24, 0.11, 0.17] as const;
+const TWIST_SAMPLE_FRACTION = 0.12;
+
+type Displayed4DControlAction =
+  | { kind: 'rotation'; axisIndex: 0 | 1 | 2; dir: -1 | 1 }
+  | { kind: 'faceTurn'; gripIndex: number; dir: MagicCube4DTwistDirection };
+
+interface Displayed4DControlRow {
+  key: string;
+  slotLabel: string;
+  negativeAction: Displayed4DControlAction;
+  positiveAction: Displayed4DControlAction;
+}
+
 type ScreenMode = 'cube' | 'hypercube';
 type HypercubeAction = { type: 'state' } | { type: 'view'; previousViewMatrix: Mat3 };
 type HypercubeRotationMode = '4d' | '3d' | null;
@@ -112,17 +138,19 @@ export default function Index() {
     ),
     [magicCube4DSettings.viewPitchDeg, magicCube4DSettings.viewYawDeg, saved4DViewMatrix],
   );
-  const selected4DAxisOptions = useMemo(
-    () => {
-      if (selected4DFace == null) {
-        return GLOBAL_4D_AXIS_OPTIONS;
-      }
-
-      return [...getFaceTwistAxisOptions(selected4DFace)].sort(
-        (left, right) => left.axisIndex - right.axisIndex,
-      );
-    },
-    [selected4DFace],
+  const [live4DViewMatrix, setLive4DViewMatrix] = useState<Mat3>(base4DViewMatrix);
+  useEffect(() => {
+    const nextViewMatrix = cloneMat3(base4DViewMatrix);
+    current4DViewMatrixRef.current = nextViewMatrix;
+    setLive4DViewMatrix(nextViewMatrix);
+  }, [base4DViewMatrix]);
+  const displayed4DControlRows = useMemo(
+    () => buildDisplayed4DControlRows(
+      selected4DFace,
+      rotation4d,
+      live4DViewMatrix,
+    ),
+    [live4DViewMatrix, rotation4d, selected4DFace],
   );
   const current4DFaceColors = useMemo(
     () => MAGICCUBE4D_FACE_COLORS.map((_, faceIndex) => {
@@ -201,7 +229,9 @@ export default function Index() {
     twistGrip(pickInfo?.gripIndex ?? null, -1);
   }, [select4DFace, twistGrip]);
   const handle4DViewMatrixChange = useCallback((nextViewMatrix: Mat3) => {
-    current4DViewMatrixRef.current = cloneMat3(nextViewMatrix);
+    const cloned = cloneMat3(nextViewMatrix);
+    current4DViewMatrixRef.current = cloned;
+    setLive4DViewMatrix(cloned);
     setShow4DViewReset(!mat3EqualsWithinTolerance(nextViewMatrix, base4DViewMatrix));
   }, [base4DViewMatrix]);
   const actionDisabled = mode === 'cube' ? !!twistAnim : magicCube4DAnimating;
@@ -308,27 +338,23 @@ export default function Index() {
   };
 
   const handle4DControlPress = useCallback((
-    option: Pick<MagicCube4DFaceAxisOption, 'axisIndex' | 'gripIndex' | 'oppositeGripIndex'> | { axisIndex: 0 | 1 | 2 },
-    dir: -1 | 1,
+    action: Displayed4DControlAction,
   ) => {
-    if (selected4DFace == null) {
-      if (hypercubeRotationMode === null) {
-        return;
-      }
-      if (hypercubeRotationMode === '4d') {
-        rotateState(option.axisIndex as 0 | 1 | 2, dir);
-      } else {
-        rotateSpatialState(option.axisIndex as 0 | 1 | 2, dir);
-      }
+    if (action.kind === 'faceTurn') {
+      twistGrip(action.gripIndex, action.dir);
       return;
     }
 
-    if (!('gripIndex' in option) || !('oppositeGripIndex' in option)) {
+    if (hypercubeRotationMode === null) {
       return;
     }
 
-    twistGrip(dir < 0 ? option.oppositeGripIndex : option.gripIndex, 1);
-  }, [hypercubeRotationMode, rotateSpatialState, rotateState, selected4DFace, twistGrip]);
+    if (hypercubeRotationMode === '4d') {
+      rotateState(action.axisIndex, -action.dir);
+    } else {
+      rotateSpatialState(action.axisIndex, -action.dir);
+    }
+  }, [hypercubeRotationMode, rotateSpatialState, rotateState, twistGrip]);
   const handleSliceButtonPress = useCallback((bit: number) => {
     setHypercubeRotationMode(null);
     setSelected4DFace(null);
@@ -550,25 +576,29 @@ export default function Index() {
               <View style={styles.bottomControls}>
                 <View style={styles.bottomControlSplit}>
                   <View style={[styles.controlPanel, styles.faceControlPanel]}>
-                    <View style={styles.facePickerColumn}>
-                      {FACE_SELECTION_ROWS.map(row => (
-                        <View key={row.join('-')} style={styles.faceChipRow}>
-                          {row.map(faceIndex => (
-                            <Pressable
-                              key={MAGICCUBE4D_FACE_LABELS[faceIndex]}
-                              style={({ pressed }) => [
-                                styles.faceChip,
-                                { backgroundColor: current4DFaceColors[faceIndex] },
-                                selected4DFace === faceIndex && styles.faceChipActive,
-                                pressed && !magicCube4DAnimating && styles.faceChipPressed,
-                              ]}
-                              onPress={() => toggle4DFace(faceIndex)}
-                              disabled={magicCube4DAnimating}
-                            >
-                              <Text style={[styles.faceChipText, { color: getButtonTextColor(current4DFaceColors[faceIndex]) }]}>
-                                {MAGICCUBE4D_FACE_LABELS[faceIndex]}
-                              </Text>
-                            </Pressable>
+                    <View style={styles.facePickerGrid}>
+                      {GRIP_FACE_GRID_ROWS.map((row, rowIndex) => (
+                        <View key={`grip-row-${rowIndex}`} style={styles.faceChipRow}>
+                          {row.map((faceIndex, colIndex) => (
+                            faceIndex == null ? (
+                              <View key={`empty-${rowIndex}-${colIndex}`} style={styles.faceChipPlaceholder} />
+                            ) : (
+                              <Pressable
+                                key={MAGICCUBE4D_FACE_LABELS[faceIndex]}
+                                style={({ pressed }) => [
+                                  styles.faceChip,
+                                  { backgroundColor: current4DFaceColors[faceIndex] },
+                                  selected4DFace === faceIndex && styles.faceChipActive,
+                                  pressed && !magicCube4DAnimating && styles.faceChipPressed,
+                                ]}
+                                onPress={() => toggle4DFace(faceIndex)}
+                                disabled={magicCube4DAnimating}
+                              >
+                                <Text style={[styles.faceChipText, { color: getButtonTextColor(current4DFaceColors[faceIndex]) }]}>
+                                  {GRIP_FACE_BUTTON_LABELS[faceIndex]}
+                                </Text>
+                              </Pressable>
+                            )
                           ))}
                         </View>
                       ))}
@@ -576,20 +606,20 @@ export default function Index() {
                   </View>
                   <View style={[styles.controlPanel, styles.turnControlPanel]}>
                     <View style={styles.turnButtonColumn}>
-                      {selected4DAxisOptions.map(option => (
+                      {displayed4DControlRows.map(row => (
                         <View
-                          key={`${selected4DFace}-${option.axisIndex}`}
+                          key={row.key}
                           style={styles.turnButtonPair}
                         >
                           <CompactControlButton
-                            label={AXIS_TARGET_LABELS[option.axisIndex][0]}
-                            onPress={() => handle4DControlPress(option, -1)}
+                            label={`${row.slotLabel}-`}
+                            onPress={() => handle4DControlPress(row.negativeAction)}
                             disabled={magicCube4DAnimating || (selected4DFace == null && hypercubeRotationMode === null)}
                             color={selected4DFaceColor}
                           />
                           <CompactControlButton
-                            label={AXIS_TARGET_LABELS[option.axisIndex][1]}
-                            onPress={() => handle4DControlPress(option, 1)}
+                            label={`${row.slotLabel}+`}
+                            onPress={() => handle4DControlPress(row.positiveAction)}
                             disabled={magicCube4DAnimating || (selected4DFace == null && hypercubeRotationMode === null)}
                             color={selected4DFaceColor}
                           />
@@ -686,6 +716,243 @@ function getButtonTextColor(backgroundColor: string): string {
   const b = parseInt(normalized.slice(4, 6), 16);
   const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return luminance > 0.62 ? '#111111' : '#f5f7ff';
+}
+
+function buildDisplayed4DControlRows(
+  selected4DFace: number | null,
+  rotation4d: readonly (readonly number[])[],
+  viewMatrix: Mat3,
+): Displayed4DControlRow[] {
+  if (selected4DFace == null) {
+    return GLOBAL_4D_AXIS_OPTIONS.map(option => ({
+      key: `rotation-${option.axisIndex}`,
+      slotLabel: ROTATION_ROW_LABELS[option.axisIndex],
+      negativeAction: { kind: 'rotation', axisIndex: option.axisIndex, dir: -1 },
+      positiveAction: { kind: 'rotation', axisIndex: option.axisIndex, dir: 1 },
+    }));
+  }
+
+  const faceCenter = getFaceCenter(selected4DFace);
+  const faceAxisOptions = [...getFaceTwistAxisOptions(selected4DFace)];
+  const probePoint = buildFaceProbePoint(faceCenter, faceAxisOptions.map(option => option.axisIndex));
+  const globalAxisRows = buildGlobalAxisRows(rotation4d, viewMatrix, probePoint);
+  const localCandidates = faceAxisOptions.map(option => ({
+    option,
+    positiveMotion: getLocalTurnMotionVector(option.gripIndex, 1, probePoint, rotation4d, viewMatrix),
+    negativeMotion: getLocalTurnMotionVector(option.oppositeGripIndex, 1, probePoint, rotation4d, viewMatrix),
+  }));
+
+  const remaining = [...localCandidates];
+  const rows: Displayed4DControlRow[] = [];
+
+  globalAxisRows.forEach(globalRow => {
+    const bestIndex = remaining.length === 1
+      ? 0
+      : findBestAxisMatchIndex(remaining, globalRow.positiveMotion);
+    const [selected] = remaining.splice(bestIndex, 1);
+    const positiveMatchesPositiveBase = signedMotionSimilarity(selected.positiveMotion, globalRow.positiveMotion)
+      >= signedMotionSimilarity(selected.negativeMotion, globalRow.positiveMotion);
+    const positiveMatchesPositive = globalRow.slotLabel === 'U'
+      ? positiveMatchesPositiveBase
+      : !positiveMatchesPositiveBase;
+    rows.push({
+      key: `face-${selected4DFace}-${globalRow.axisIndex}`,
+      slotLabel: globalRow.slotLabel,
+      negativeAction: positiveMatchesPositive
+        ? { kind: 'faceTurn', gripIndex: selected.option.oppositeGripIndex, dir: 1 }
+        : { kind: 'faceTurn', gripIndex: selected.option.gripIndex, dir: 1 },
+      positiveAction: positiveMatchesPositive
+        ? { kind: 'faceTurn', gripIndex: selected.option.gripIndex, dir: 1 }
+        : { kind: 'faceTurn', gripIndex: selected.option.oppositeGripIndex, dir: 1 },
+    });
+  });
+
+  return rows;
+}
+
+function buildGlobalAxisRows(
+  rotation4d: readonly (readonly number[])[],
+  viewMatrix: Mat3,
+  probePoint: readonly number[],
+): {
+  axisIndex: 0 | 1 | 2;
+  slotLabel: 'U' | 'R' | 'F';
+  positiveMotion: [number, number, number];
+}[] {
+  const globalAxes = GLOBAL_4D_AXIS_OPTIONS.map(option => ({
+    axisIndex: option.axisIndex,
+    viewVector: getGlobalAxisViewVector(option.axisIndex, rotation4d, viewMatrix),
+    positiveMotion: getGlobalRotationMotionVector(option.axisIndex, 1, probePoint, rotation4d, viewMatrix),
+  }));
+  const remaining = [...globalAxes];
+  const rows: {
+    axisIndex: 0 | 1 | 2;
+    slotLabel: 'U' | 'R' | 'F';
+    positiveMotion: [number, number, number];
+  }[] = [];
+
+  const uIndex = findBestViewAlignmentIndex(remaining, 1);
+  rows.push({ axisIndex: remaining[uIndex].axisIndex, slotLabel: 'U', positiveMotion: remaining[uIndex].positiveMotion });
+  remaining.splice(uIndex, 1);
+
+  const rIndex = remaining.length === 1 ? 0 : findBestViewAlignmentIndex(remaining, 0);
+  rows.push({ axisIndex: remaining[rIndex].axisIndex, slotLabel: 'F', positiveMotion: remaining[rIndex].positiveMotion });
+  remaining.splice(rIndex, 1);
+
+  rows.push({ axisIndex: remaining[0].axisIndex, slotLabel: 'R', positiveMotion: remaining[0].positiveMotion });
+  return rows;
+}
+
+function getGlobalAxisViewVector(
+  axisIndex: number,
+  rotation4d: readonly (readonly number[])[],
+  viewMatrix: Mat3,
+): [number, number, number] {
+  const positivePoint = offsetPoint4([0, 0, 0, 0], axisIndex, AXIS_SAMPLE_OFFSET);
+  const negativePoint = offsetPoint4([0, 0, 0, 0], axisIndex, -AXIS_SAMPLE_OFFSET);
+  return subtract3(
+    projectPointToView(positivePoint, rotation4d, viewMatrix),
+    projectPointToView(negativePoint, rotation4d, viewMatrix),
+  );
+}
+
+function findBestViewAlignmentIndex(
+  candidates: { viewVector: [number, number, number] }[],
+  componentIndex: 0 | 1 | 2,
+): number {
+  let bestIndex = 0;
+  let bestScore = Math.abs(candidates[0].viewVector[componentIndex]);
+  for (let index = 1; index < candidates.length; index++) {
+    const score = Math.abs(candidates[index].viewVector[componentIndex]);
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+  return bestIndex;
+}
+
+function buildFaceProbePoint(
+  faceCenter: readonly number[],
+  faceAxisIndices: readonly number[],
+): [number, number, number, number] {
+  let point = [...faceCenter] as [number, number, number, number];
+  faceAxisIndices.forEach((axisIndex, index) => {
+    point = offsetPoint4(point, axisIndex, FACE_PROBE_OFFSETS[index] ?? FACE_PROBE_OFFSETS[FACE_PROBE_OFFSETS.length - 1]);
+  });
+  return point;
+}
+
+function getGlobalRotationMotionVector(
+  axisIndex: 0 | 1 | 2,
+  buttonDir: -1 | 1,
+  probePoint: readonly number[],
+  rotation4d: readonly (readonly number[])[],
+  viewMatrix: Mat3,
+): [number, number, number] {
+  const rotation = getSpatialRotationMatrix(axisIndex, (-buttonDir * Math.PI / 2) * TWIST_SAMPLE_FRACTION);
+  return subtract3(
+    projectPointToView(mulRowVec4(probePoint as [number, number, number, number], rotation), rotation4d, viewMatrix),
+    projectPointToView(probePoint, rotation4d, viewMatrix),
+  );
+}
+
+function getLocalTurnMotionVector(
+  gripIndex: number,
+  dir: MagicCube4DTwistDirection,
+  probePoint: readonly number[],
+  rotation4d: readonly (readonly number[])[],
+  viewMatrix: Mat3,
+): [number, number, number] {
+  const twistMatrix = getGripTwistMatrix(gripIndex, dir, TWIST_SAMPLE_FRACTION);
+  return subtract3(
+    projectPointToView(mulRowVec4(probePoint as [number, number, number, number], twistMatrix), rotation4d, viewMatrix),
+    projectPointToView(probePoint, rotation4d, viewMatrix),
+  );
+}
+
+function findBestAxisMatchIndex(
+  candidates: { positiveMotion: [number, number, number]; negativeMotion: [number, number, number] }[],
+  globalMotion: [number, number, number],
+): number {
+  let bestIndex = 0;
+  let bestScore = Math.max(
+    motionSimilarity(candidates[0].positiveMotion, globalMotion),
+    motionSimilarity(candidates[0].negativeMotion, globalMotion),
+  );
+  for (let index = 1; index < candidates.length; index++) {
+    const score = Math.max(
+      motionSimilarity(candidates[index].positiveMotion, globalMotion),
+      motionSimilarity(candidates[index].negativeMotion, globalMotion),
+    );
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+  return bestIndex;
+}
+
+function motionSimilarity(
+  left: readonly number[],
+  right: readonly number[],
+): number {
+  const leftLength = Math.hypot(left[0], left[1], left[2]);
+  const rightLength = Math.hypot(right[0], right[1], right[2]);
+  if (leftLength < 1e-6 || rightLength < 1e-6) {
+    return -1;
+  }
+  return Math.abs(dot3(left, right) / (leftLength * rightLength));
+}
+
+function signedMotionSimilarity(
+  left: readonly number[],
+  right: readonly number[],
+): number {
+  const leftLength = Math.hypot(left[0], left[1], left[2]);
+  const rightLength = Math.hypot(right[0], right[1], right[2]);
+  if (leftLength < 1e-6 || rightLength < 1e-6) {
+    return -1;
+  }
+  return dot3(left, right) / (leftLength * rightLength);
+}
+
+function offsetPoint4(
+  point: readonly number[],
+  axisIndex: number,
+  amount: number,
+): [number, number, number, number] {
+  const next = [...point] as [number, number, number, number];
+  next[axisIndex as 0 | 1 | 2 | 3] += amount;
+  return next;
+}
+
+function projectPointToView(
+  point: readonly number[],
+  rotation4d: readonly (readonly number[])[],
+  viewMatrix: Mat3,
+): [number, number, number] {
+  const rotated = mulRowVec4(point as [number, number, number, number], rotation4d as never);
+  const scaled = rotated.map(value => value * MAGICCUBE4D_SCALE_4D) as [number, number, number, number];
+  const denom = Math.max(MAGICCUBE4D_EYE_W - scaled[3], 0.15);
+  const factor = MAGICCUBE4D_EYE_W / denom;
+  const projected = [scaled[0] * factor, scaled[1] * factor, scaled[2] * factor] as const;
+  const rotated3d = mulVec(viewMatrix, [projected[0], projected[1], -projected[2]]);
+  return [rotated3d[0], rotated3d[1], -rotated3d[2]];
+}
+
+function subtract3(
+  left: readonly number[],
+  right: readonly number[],
+): [number, number, number] {
+  return [left[0] - right[0], left[1] - right[1], left[2] - right[2]];
+}
+
+function dot3(
+  left: readonly number[],
+  right: readonly number[],
+): number {
+  return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
 }
 
 function mat3EqualsWithinTolerance(left: Mat3, right: Mat3, epsilon = 1e-4): boolean {
@@ -806,9 +1073,9 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   hypercubeControls: {
-    paddingTop: 10,
-    paddingBottom: 14,
-    gap: 10,
+    paddingTop: 8,
+    paddingBottom: 10,
+    gap: 8,
   },
   sliceButton: {
     borderRadius: 999,
@@ -832,12 +1099,12 @@ const styles = StyleSheet.create({
   },
   bottomControls: {
     paddingHorizontal: 12,
-    gap: 8,
+    gap: 6,
   },
   bottomControlSplit: {
     flexDirection: 'row',
     alignItems: 'stretch',
-    gap: 10,
+    gap: 8,
   },
   controlPanel: {
     flex: 1,
@@ -849,32 +1116,38 @@ const styles = StyleSheet.create({
   turnControlPanel: {
     flex: 1.05,
   },
-  facePickerColumn: {
-    gap: 8,
+  facePickerGrid: {
+    gap: 4,
   },
   faceChipRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 4,
   },
   turnButtonColumn: {
-    gap: 8,
-    justifyContent: 'center',
+    gap: 4,
+    justifyContent: 'flex-start',
     flex: 1,
   },
   turnButtonPair: {
     flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 8,
+    gap: 4,
   },
   faceChip: {
     flex: 1,
     minWidth: 0,
-    paddingHorizontal: 8,
-    paddingVertical: 9,
-    borderRadius: 14,
+    minHeight: 34,
+    paddingHorizontal: 4,
+    paddingVertical: 5,
+    borderRadius: 10,
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  faceChipPlaceholder: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 34,
   },
   faceChipActive: {
     borderColor: '#f5f7ff',
@@ -885,20 +1158,22 @@ const styles = StyleSheet.create({
   },
   faceChipText: {
     color: '#111111',
-    fontSize: 12,
+    fontSize: 10,
     fontWeight: '700',
     textTransform: 'uppercase',
   },
   compactControlButton: {
     flex: 1,
     minWidth: 0,
+    height: 34,
     paddingHorizontal: 10,
-    paddingVertical: 9,
+    paddingVertical: 0,
     borderRadius: 12,
     backgroundColor: 'rgba(255,255,255,0.1)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.14)',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   compactControlButtonText: {
     color: '#f5f7ff',
@@ -934,5 +1209,6 @@ const styles = StyleSheet.create({
   },
   canvas: {
     flex: 1,
+    minHeight: 160,
   },
 });

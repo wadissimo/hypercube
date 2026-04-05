@@ -51,6 +51,7 @@ const HypercubeViewport = forwardRef<HypercubeViewportHandle, Props>(function Hy
 }: Props, ref) {
   const { width } = useWindowDimensions();
   const [canvasSize, setCanvasSize] = useState({ width, height: 0 });
+  const canvasKey = `${canvasSize.width}x${canvasSize.height}`;
   const gestureState = useHypercubeGesture({
     onTap,
     onLongTap,
@@ -81,6 +82,7 @@ const HypercubeViewport = forwardRef<HypercubeViewportHandle, Props>(function Hy
         }}
       >
         <MagicCube4DCanvas
+          key={canvasKey}
           state={state}
           viewMatrix={gestureState.viewMatrix}
           zoom={gestureState.zoom}
