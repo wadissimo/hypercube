@@ -10,7 +10,8 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.wadissimo.hypercube"
+      "bundleIdentifier": "com.wadissimo.hypercube",
+      "appleTeamId": "39W32T9A2J"
     },
     "android": {
       "adaptiveIcon": {

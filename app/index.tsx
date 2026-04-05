@@ -1,11 +1,11 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { View, StyleSheet, useWindowDimensions, Pressable, Text } from 'react-native';
+import { View, StyleSheet, Pressable, Text } from 'react-native';
 import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Ionicons } from '@expo/vector-icons';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CubeCanvas from './components/CubeCanvas';
-import MagicCube4DCanvas from './components/MagicCube4DCanvas';
+import HypercubeViewport, { type HypercubeViewportHandle } from './components/HypercubeViewport';
 import MagicCube4DSettingsSheet from './components/MagicCube4DSettingsSheet';
 import type { Axis, CubeSize, CubeState, Face } from './utils/cubeModel';
 import {
@@ -17,7 +17,7 @@ import {
   faceLayers,
 } from './utils/cubeModel';
 import { useCubeGesture } from './hooks/useCubeGesture';
-import { createHypercubeViewMatrix, useHypercubeGesture } from './hooks/useHypercubeGesture';
+import { createHypercubeViewMatrix } from './hooks/useHypercubeGesture';
 import { useMagicCube4D } from './hooks/useMagicCube4D';
 import { useTwistAnimation } from './hooks/useTwistAnimation';
 import {
@@ -60,14 +60,12 @@ type HypercubeRotationMode = '4d' | '3d' | null;
 const DEFAULT_HYPERCUBE_ROTATION_MODE: Exclude<HypercubeRotationMode, null> = '3d';
 
 export default function Index() {
-  const { width } = useWindowDimensions();
   const [mode, setMode] = useState<ScreenMode>('cube');
   const [cubeSize, setCubeSize] = useState<CubeSize>(3);
   const [cubeState, setCubeState] = useState(() => createSolvedCube(3));
   const [cubeCanUndo, setCubeCanUndo] = useState(false);
   const [scrambleText, setScrambleText] = useState('');
-  const [cubeCanvasSize, setCubeCanvasSize] = useState({ width, height: 0 });
-  const [hypercubeCanvasSize, setHypercubeCanvasSize] = useState({ width, height: 0 });
+  const [cubeCanvasSize, setCubeCanvasSize] = useState({ width: 0, height: 0 });
   const [selected4DFace, setSelected4DFace] = useState<number | null>(null);
   const [hypercubeRotationMode, setHypercubeRotationMode] = useState<HypercubeRotationMode>(DEFAULT_HYPERCUBE_ROTATION_MODE);
   const [magicCube4DSettingsOpen, setMagicCube4DSettingsOpen] = useState(false);
@@ -76,8 +74,9 @@ export default function Index() {
   const [show4DViewReset, setShow4DViewReset] = useState(false);
   const cubeHistoryRef = useRef<CubeState[]>([]);
   const current4DViewMatrixRef = useRef<Mat3 | null>(null);
+  const hypercubeViewportRef = useRef<HypercubeViewportHandle | null>(null);
   const hypercubeHistoryRef = useRef<HypercubeAction[]>([]);
-  const lastTurnSliceMaskRef = useRef(MAGICCUBE4D_SLICE_BITS[0]);
+  const lastTurnSliceMaskRef = useRef<number>(MAGICCUBE4D_SLICE_BITS[0]);
   const [hypercubeCanUndo, setHypercubeCanUndo] = useState(false);
   const { twistAnim, twist } = useTwistAnimation(setCubeState, previousState => {
     cubeHistoryRef.current.push(previousState);
@@ -136,8 +135,12 @@ export default function Index() {
   const selected4DFaceColor = selected4DFace == null ? null : current4DFaceColors[selected4DFace];
   const cubeDisabled = !!twistAnim || mode !== 'cube';
   const cubeGesture = useCubeGesture({
-    cubeState, cubeSize, width: cubeCanvasSize.width, height: cubeCanvasSize.height,
-    onTwist: twist, disabled: cubeDisabled,
+    cubeState,
+    cubeSize,
+    width: cubeCanvasSize.width,
+    height: cubeCanvasSize.height,
+    onTwist: twist,
+    disabled: cubeDisabled,
   });
   const activateDefaultRotationMode = useCallback(() => {
     setHypercubeRotationMode(DEFAULT_HYPERCUBE_ROTATION_MODE);
@@ -201,21 +204,7 @@ export default function Index() {
     current4DViewMatrixRef.current = cloneMat3(nextViewMatrix);
     setShow4DViewReset(!mat3EqualsWithinTolerance(nextViewMatrix, base4DViewMatrix));
   }, [base4DViewMatrix]);
-  const previewGesture = useHypercubeGesture({
-    onTap: handleHypercubeTap,
-    onLongTap: handleHypercubeLongTap,
-    onDoubleTap: handleHypercubeDoubleTap,
-    dragSensitivity: magicCube4DSettings.dragSensitivity,
-    viewPitchDeg: magicCube4DSettings.viewPitchDeg,
-    viewYawDeg: magicCube4DSettings.viewYawDeg,
-    initialViewMatrix: saved4DViewMatrix ?? undefined,
-    onViewMatrixChange: handle4DViewMatrixChange,
-    disabled: magicCube4DAnimating,
-  });
-
-  const activeGesture = mode === 'cube' ? cubeGesture : previewGesture;
   const actionDisabled = mode === 'cube' ? !!twistAnim : magicCube4DAnimating;
-  const activeCanvasSize = mode === 'cube' ? cubeCanvasSize : hypercubeCanvasSize;
 
   const handleSizeChange = (size: CubeSize) => {
     if (!!twistAnim) return;
@@ -230,7 +219,6 @@ export default function Index() {
 
   const handleHypercubeMode = () => {
     if (!!twistAnim) return;
-    setHypercubeCanvasSize(current => ({ width: current.width || width, height: 0 }));
     setMode('hypercube');
   };
 
@@ -253,9 +241,6 @@ export default function Index() {
   const handleClearSaved4DView = useCallback(() => {
     setSaved4DViewMatrix(null);
   }, []);
-  const handleReset4DView = useCallback(() => {
-    previewGesture.setViewMatrix(base4DViewMatrix);
-  }, [base4DViewMatrix, previewGesture]);
 
   const handleReset = () => {
     if (actionDisabled) return;
@@ -314,7 +299,7 @@ export default function Index() {
     }
 
     if (previousAction.type === 'view') {
-      previewGesture.setViewMatrix(previousAction.previousViewMatrix);
+      hypercubeViewportRef.current?.setViewMatrix(previousAction.previousViewMatrix);
     } else {
       undoMagicCube4D();
     }
@@ -331,9 +316,9 @@ export default function Index() {
         return;
       }
       if (hypercubeRotationMode === '4d') {
-        rotateState(option.axisIndex, dir);
+        rotateState(option.axisIndex as 0 | 1 | 2, dir);
       } else {
-        rotateSpatialState(option.axisIndex, dir);
+        rotateSpatialState(option.axisIndex as 0 | 1 | 2, dir);
       }
       return;
     }
@@ -453,68 +438,55 @@ export default function Index() {
               />
             </View>
           </View>
-          <GestureDetector gesture={activeGesture.gesture}>
-            <View
-              style={styles.canvas}
-              onLayout={e => {
-                const { width: nextWidth, height: nextHeight } = e.nativeEvent.layout;
-                if (mode === 'cube') {
-                  setCubeCanvasSize(current => (
-                    current.width === nextWidth && current.height === nextHeight
-                      ? current
-                      : { width: nextWidth, height: nextHeight }
-                  ));
-                } else {
-                  setHypercubeCanvasSize(current => (
-                    current.width === nextWidth && current.height === nextHeight
-                      ? current
-                      : { width: nextWidth, height: nextHeight }
-                  ));
-                }
-              }}
-            >
-              {mode === 'cube' ? (
-                <CubeCanvas
-                  cubeState={cubeState}
-                  cubeSize={cubeSize}
-                  viewMatrix={activeGesture.viewMatrix}
-                  zoom={activeGesture.zoom}
-                  twistAnim={twistAnim}
-                  width={activeCanvasSize.width}
-                  height={activeCanvasSize.height}
-                />
-              ) : (
-                <>
-                  <MagicCube4DCanvas
-                    key={`hypercube-${activeCanvasSize.width}x${activeCanvasSize.height}`}
-                    state={magicCube4DState}
-                    viewMatrix={activeGesture.viewMatrix}
-                    zoom={activeGesture.zoom}
-                    width={activeCanvasSize.width}
-                    height={activeCanvasSize.height}
-                    rotation4d={rotation4d}
-                    twistAnimation={magicCube4DTwistAnimation}
-                    settings={magicCube4DSettings}
-                    onPickReady={(picker) => {
-                      magicCube4DPickRef.current = picker;
-                    }}
+          <View style={styles.canvas}>
+            {mode === 'cube' ? (
+              <GestureDetector gesture={cubeGesture.gesture}>
+                <View
+                  style={styles.canvas}
+                  onLayout={e => {
+                    const { width: nextWidth, height: nextHeight } = e.nativeEvent.layout;
+                    setCubeCanvasSize(current => (
+                      current.width === nextWidth && current.height === nextHeight
+                        ? current
+                        : { width: nextWidth, height: nextHeight }
+                    ));
+                  }}
+                >
+                  <CubeCanvas
+                    cubeState={cubeState}
+                    cubeSize={cubeSize}
+                    viewMatrix={cubeGesture.viewMatrix}
+                    zoom={cubeGesture.zoom}
+                    twistAnim={twistAnim}
+                    width={cubeCanvasSize.width}
+                    height={cubeCanvasSize.height}
                   />
-                  {show4DViewReset && (
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.floatingViewResetButton,
-                        pressed && styles.actionButtonPressed,
-                      ]}
-                      onPress={handleReset4DView}
-                      disabled={magicCube4DAnimating}
-                    >
-                      <Ionicons name="compass-outline" size={16} color="#f5f7ff" />
-                    </Pressable>
-                  )}
-                </>
-              )}
-            </View>
-          </GestureDetector>
+                </View>
+              </GestureDetector>
+            ) : (
+              <HypercubeViewport
+                ref={hypercubeViewportRef}
+                state={magicCube4DState}
+                rotation4d={rotation4d}
+                twistAnimation={magicCube4DTwistAnimation}
+                settings={magicCube4DSettings}
+                dragSensitivity={magicCube4DSettings.dragSensitivity}
+                viewPitchDeg={magicCube4DSettings.viewPitchDeg}
+                viewYawDeg={magicCube4DSettings.viewYawDeg}
+                initialViewMatrix={saved4DViewMatrix ?? undefined}
+                onViewMatrixChange={handle4DViewMatrixChange}
+                onTap={handleHypercubeTap}
+                onLongTap={handleHypercubeLongTap}
+                onDoubleTap={handleHypercubeDoubleTap}
+                onPickReady={(picker) => {
+                  magicCube4DPickRef.current = picker;
+                }}
+                disabled={magicCube4DAnimating}
+                showResetButton={show4DViewReset}
+                resetViewMatrix={base4DViewMatrix}
+              />
+            )}
+          </View>
           {mode === 'hypercube' && (
             <View style={styles.hypercubeControls}>
               <View style={styles.sliceBar}>
@@ -962,18 +934,5 @@ const styles = StyleSheet.create({
   },
   canvas: {
     flex: 1,
-  },
-  floatingViewResetButton: {
-    position: 'absolute',
-    bottom: 12,
-    left: 12,
-    width: 36,
-    height: 36,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(26,26,46,0.72)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.18)',
   },
 });

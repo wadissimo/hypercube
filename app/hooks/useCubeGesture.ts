@@ -1,4 +1,4 @@
-import { useRef, useReducer } from 'react';
+import { useCallback, useEffect, useRef, useReducer } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import type { Mat3 } from '../utils/math3d';
 import { mulMat, rotX, rotY } from '../utils/math3d';
@@ -35,6 +35,7 @@ export function useCubeGesture(params: Params) {
   const pinchStartZoom = useRef(INITIAL_ZOOM);
   const prevTranslation = useRef<[number, number]>([0, 0]);
   const [, forceRender] = useReducer((x: number) => x + 1, 0);
+  const renderFrameRef = useRef<number | null>(null);
 
   // Sticker interaction state
   const hitRef = useRef<StickerHit | null>(null);
@@ -45,6 +46,25 @@ export function useCubeGesture(params: Params) {
   // Latest params via ref so gesture callbacks always see current values
   const p = useRef(params);
   p.current = params;
+
+  useEffect(() => (
+    () => {
+      if (renderFrameRef.current !== null) {
+        cancelAnimationFrame(renderFrameRef.current);
+      }
+    }
+  ), []);
+
+  const scheduleRender = useCallback(() => {
+    if (renderFrameRef.current !== null) {
+      return;
+    }
+
+    renderFrameRef.current = requestAnimationFrame(() => {
+      renderFrameRef.current = null;
+      forceRender();
+    });
+  }, []);
 
   const panGesture = Gesture.Pan()
     .runOnJS(true)
@@ -101,7 +121,7 @@ export function useCubeGesture(params: Params) {
         prevTranslation.current = [e.translationX, e.translationY];
         const delta = mulMat(rotX(-dy * SENSITIVITY), rotY(-dx * SENSITIVITY));
         viewMatrix.current = mulMat(delta, viewMatrix.current);
-        forceRender();
+        scheduleRender();
       }
     })
     .onFinalize((e) => {
@@ -137,7 +157,7 @@ export function useCubeGesture(params: Params) {
     })
     .onUpdate((e) => {
       zoom.current = clamp(pinchStartZoom.current * e.scale, MIN_ZOOM, MAX_ZOOM);
-      forceRender();
+      scheduleRender();
     });
 
   const gesture = Gesture.Simultaneous(panGesture, pinchGesture);

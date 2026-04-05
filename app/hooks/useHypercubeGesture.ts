@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from 'react';
+import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import type { Mat3 } from '../utils/math3d';
 import { cloneMat3, mulMat, rotX, rotY, rotZ } from '../utils/math3d';
@@ -37,18 +37,37 @@ export function useHypercubeGesture({
   const zoom = useRef(INITIAL_ZOOM);
   const pinchStartZoom = useRef(INITIAL_ZOOM);
   const [, forceRender] = useReducer((value: number) => value + 1, 0);
+  const renderFrameRef = useRef<number | null>(null);
+
+  useEffect(() => (
+    () => {
+      if (renderFrameRef.current !== null) {
+        cancelAnimationFrame(renderFrameRef.current);
+      }
+    }
+  ), []);
+
+  const scheduleRender = useCallback(() => {
+    if (renderFrameRef.current !== null) {
+      return;
+    }
+
+    renderFrameRef.current = requestAnimationFrame(() => {
+      renderFrameRef.current = null;
+      onViewMatrixChange?.(viewMatrix.current);
+      forceRender();
+    });
+  }, [onViewMatrixChange]);
 
   useEffect(() => {
     viewMatrix.current = cloneMat3(initialViewMatrix ?? createHypercubeViewMatrix(viewPitchDeg, viewYawDeg));
-    onViewMatrixChange?.(viewMatrix.current);
-    forceRender();
-  }, [initialViewMatrix, onViewMatrixChange, viewPitchDeg, viewYawDeg]);
+    scheduleRender();
+  }, [initialViewMatrix, scheduleRender, viewPitchDeg, viewYawDeg]);
 
-  const commitViewMatrix = (nextViewMatrix: Mat3) => {
+  const commitViewMatrix = useCallback((nextViewMatrix: Mat3) => {
     viewMatrix.current = cloneMat3(nextViewMatrix);
-    onViewMatrixChange?.(viewMatrix.current);
-    forceRender();
-  };
+    scheduleRender();
+  }, [scheduleRender]);
 
   const panGesture = Gesture.Pan()
     .runOnJS(true)
@@ -71,7 +90,7 @@ export function useHypercubeGesture({
     })
     .onUpdate((event) => {
       zoom.current = clamp(pinchStartZoom.current * event.scale, MIN_ZOOM, MAX_ZOOM);
-      forceRender();
+      scheduleRender();
     });
 
   const doubleTapGesture = Gesture.Tap()

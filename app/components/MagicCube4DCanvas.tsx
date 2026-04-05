@@ -42,7 +42,8 @@ export default function MagicCube4DCanvas({
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
   const glRef = useRef<ExpoWebGLRenderingContext | null>(null);
   const frameRef = useRef<number | null>(null);
-  const modelGroupRef = useRef<THREE.Group | null>(null);
+  const faceMeshRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial> | null>(null);
+  const edgeLinesRef = useRef<THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial> | null>(null);
 
   const frameData = useMemo(
     () => buildMagicCube4DFrame(
@@ -57,6 +58,31 @@ export default function MagicCube4DCanvas({
     ),
     [state, rotation4d, viewMatrix, twistAnimation, width, height, zoom, settings],
   );
+
+  const renderScene = useCallback(() => {
+    const renderer = rendererRef.current;
+    const scene = sceneRef.current;
+    const camera = cameraRef.current;
+    const gl = glRef.current;
+
+    if (!renderer || !scene || !camera || !gl) {
+      return;
+    }
+
+    renderer.render(scene, camera);
+    gl.endFrameEXP();
+  }, []);
+
+  const scheduleRender = useCallback(() => {
+    if (frameRef.current !== null) {
+      return;
+    }
+
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null;
+      renderScene();
+    });
+  }, [renderScene]);
 
   const updateView = useCallback(() => {
     const renderer = rendererRef.current;
@@ -86,12 +112,12 @@ export default function MagicCube4DCanvas({
   }, [height, width]);
 
   const rebuildModel = useCallback(() => {
-    const modelGroup = modelGroupRef.current;
-    if (!modelGroup) {
+    const faceMesh = faceMeshRef.current;
+    const edgeLines = edgeLinesRef.current;
+    if (!faceMesh || !edgeLines) {
       return;
     }
 
-    clearGroup(modelGroup);
     const facePositions: number[] = [];
     const faceColors: number[] = [];
     const edgePositions: number[] = [];
@@ -121,39 +147,8 @@ export default function MagicCube4DCanvas({
       }
     }
 
-    const faceGeometry = new THREE.BufferGeometry();
-    faceGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(facePositions), 3));
-    faceGeometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(faceColors), 3));
-    const mesh = new THREE.Mesh(
-      faceGeometry,
-      new THREE.MeshBasicMaterial({
-        vertexColors: true,
-        side: THREE.DoubleSide,
-        transparent: false,
-        opacity: 1,
-        blending: THREE.NoBlending,
-        polygonOffset: true,
-        polygonOffsetFactor: 1,
-        polygonOffsetUnits: 1,
-        depthTest: true,
-        depthWrite: true,
-      }),
-    );
-    mesh.renderOrder = 1;
-    modelGroup.add(mesh);
-
-    const edgeGeometry = new THREE.BufferGeometry();
-    edgeGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(edgePositions), 3));
-    const edges = new THREE.LineSegments(
-      edgeGeometry,
-      new THREE.LineBasicMaterial({
-        color: EDGE_COLOR,
-        depthTest: true,
-        depthWrite: false,
-      }),
-    );
-    edges.renderOrder = 2;
-    modelGroup.add(edges);
+    updateGeometry(faceMesh.geometry, facePositions, faceColors);
+    updateGeometry(edgeLines.geometry, edgePositions);
   }, [frameData]);
 
   const pickInfo = useCallback((x: number, y: number): MagicCube4DPickInfo | null => {
@@ -177,18 +172,19 @@ export default function MagicCube4DCanvas({
 
   useLayoutEffect(() => {
     rebuildModel();
-  }, [rebuildModel]);
-
-  useLayoutEffect(() => {
     updateView();
-  }, [updateView]);
+    scheduleRender();
+  }, [rebuildModel, scheduleRender, updateView]);
 
   useEffect(() => (
     () => {
       if (frameRef.current !== null) {
         cancelAnimationFrame(frameRef.current);
       }
-      clearGroup(modelGroupRef.current);
+      disposeRenderable(faceMeshRef.current);
+      disposeRenderable(edgeLinesRef.current);
+      faceMeshRef.current = null;
+      edgeLinesRef.current = null;
       rendererRef.current?.dispose();
     }
   ), []);
@@ -225,21 +221,41 @@ export default function MagicCube4DCanvas({
     camera.updateProjectionMatrix();
     cameraRef.current = camera;
 
-    const modelGroup = new THREE.Group();
-    scene.add(modelGroup);
-    modelGroupRef.current = modelGroup;
+    const faceMesh = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        side: THREE.DoubleSide,
+        transparent: false,
+        opacity: 1,
+        blending: THREE.NoBlending,
+        polygonOffset: true,
+        polygonOffsetFactor: 1,
+        polygonOffsetUnits: 1,
+        depthTest: true,
+        depthWrite: true,
+      }),
+    );
+    faceMesh.renderOrder = 1;
+    scene.add(faceMesh);
+    faceMeshRef.current = faceMesh;
+
+    const edgeLines = new THREE.LineSegments(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({
+        color: EDGE_COLOR,
+        depthTest: true,
+        depthWrite: false,
+      }),
+    );
+    edgeLines.renderOrder = 2;
+    scene.add(edgeLines);
+    edgeLinesRef.current = edgeLines;
 
     rebuildModel();
     updateView();
-
-    const renderLoop = () => {
-      frameRef.current = requestAnimationFrame(renderLoop);
-      renderer.render(scene, camera);
-      gl.endFrameEXP();
-    };
-
-    renderLoop();
-  }, [height, rebuildModel, updateView, width]);
+    scheduleRender();
+  }, [height, rebuildModel, scheduleRender, updateView, width]);
 
   return (
     <GLView
@@ -250,30 +266,42 @@ export default function MagicCube4DCanvas({
   );
 }
 
-function clearGroup(group: THREE.Group | null) {
-  if (!group) {
+function disposeRenderable(object: THREE.Object3D | null) {
+  if (!object) {
     return;
   }
 
-  while (group.children.length > 0) {
-    const child = group.children[0];
-    group.remove(child);
+  if ('geometry' in object && object.geometry instanceof THREE.BufferGeometry) {
+    object.geometry.dispose();
+  }
 
-    if ('geometry' in child && child.geometry instanceof THREE.BufferGeometry) {
-      child.geometry.dispose();
-    }
-
-    if ('material' in child) {
-      const material = child.material as THREE.Material | THREE.Material[];
-      if (Array.isArray(material)) {
-        for (const item of material) {
-          item.dispose();
-        }
-      } else {
-        material.dispose();
+  if ('material' in object) {
+    const material = object.material as THREE.Material | THREE.Material[];
+    if (Array.isArray(material)) {
+      for (const item of material) {
+        item.dispose();
       }
+    } else {
+      material.dispose();
     }
   }
+}
+
+function updateGeometry(
+  geometry: THREE.BufferGeometry,
+  positions: number[],
+  colors?: number[],
+) {
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
+  geometry.setDrawRange(0, positions.length / 3);
+
+  if (colors) {
+    geometry.setAttribute('color', new THREE.BufferAttribute(new Float32Array(colors), 3));
+  } else if (geometry.hasAttribute('color')) {
+    geometry.deleteAttribute('color');
+  }
+
+  geometry.computeBoundingSphere();
 }
 
 function pushPoint(target: number[], point: [number, number], order: number) {
