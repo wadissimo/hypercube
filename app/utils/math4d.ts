@@ -39,6 +39,15 @@ export function identity4(): Mat4 {
   ];
 }
 
+export function cloneMat4(matrix: Mat4): Mat4 {
+  return [
+    [...matrix[0]] as Vec4,
+    [...matrix[1]] as Vec4,
+    [...matrix[2]] as Vec4,
+    [...matrix[3]] as Vec4,
+  ];
+}
+
 export function mulVec4(matrix: Mat4, vector: Vec4): Vec4 {
   return [
     matrix[0][0] * vector[0] + matrix[0][1] * vector[1] + matrix[0][2] * vector[2] + matrix[0][3] * vector[3],

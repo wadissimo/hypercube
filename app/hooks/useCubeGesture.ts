@@ -16,6 +16,12 @@ const MAX_ZOOM = 1.9;
 const SWIPE_THRESHOLD = 5;
 const LONG_PRESS_MS = 300;
 
+export const INITIAL_CUBE_ZOOM = 1;
+
+export function createDefaultCubeViewMatrix(): Mat3 {
+  return mulMat(rotX(INITIAL_RX), rotY(INITIAL_RY));
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
@@ -27,11 +33,19 @@ interface Params {
   height: number;
   onTwist: (face: Face, clockwise: boolean, layers: number[]) => void;
   disabled: boolean;
+  initialViewMatrix?: Mat3;
+  initialZoom?: number;
+  onViewStateChange?: (next: { viewMatrix: Mat3; zoom: number }) => void;
 }
 
 export function useCubeGesture(params: Params) {
-  const viewMatrix = useRef<Mat3>(mulMat(rotX(INITIAL_RX), rotY(INITIAL_RY)));
-  const zoom = useRef(INITIAL_ZOOM);
+  const {
+    initialViewMatrix,
+    initialZoom = INITIAL_CUBE_ZOOM,
+    onViewStateChange,
+  } = params;
+  const viewMatrix = useRef<Mat3>(cloneMat3(initialViewMatrix ?? createDefaultCubeViewMatrix()));
+  const zoom = useRef(initialZoom);
   const pinchStartZoom = useRef(INITIAL_ZOOM);
   const prevTranslation = useRef<[number, number]>([0, 0]);
   const [, forceRender] = useReducer((x: number) => x + 1, 0);
@@ -62,9 +76,24 @@ export function useCubeGesture(params: Params) {
 
     renderFrameRef.current = requestAnimationFrame(() => {
       renderFrameRef.current = null;
+      onViewStateChange?.({
+        viewMatrix: cloneMat3(viewMatrix.current),
+        zoom: zoom.current,
+      });
       forceRender();
     });
-  }, []);
+  }, [onViewStateChange]);
+
+  useEffect(() => {
+    const nextViewMatrix = initialViewMatrix ?? createDefaultCubeViewMatrix();
+    if (matricesMatch(viewMatrix.current, nextViewMatrix) && Math.abs(zoom.current - initialZoom) < 1e-4) {
+      return;
+    }
+
+    viewMatrix.current = cloneMat3(nextViewMatrix);
+    zoom.current = initialZoom;
+    scheduleRender();
+  }, [initialViewMatrix, initialZoom, scheduleRender]);
 
   const panGesture = Gesture.Pan()
     .runOnJS(true)
@@ -184,4 +213,16 @@ export function useCubeGesture(params: Params) {
     rotateView,
     setViewMatrix: commitViewMatrix,
   };
+}
+
+function matricesMatch(left: Mat3, right: Mat3, epsilon = 1e-4): boolean {
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 3; col++) {
+      if (Math.abs(left[row][col] - right[row][col]) > epsilon) {
+        return false;
+      }
+    }
+  }
+
+  return true;
 }

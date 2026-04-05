@@ -4,8 +4,12 @@ import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-ha
 import { Ionicons } from '@expo/vector-icons';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import AppInfoSheet, { type InfoSection } from './components/AppInfoSheet';
+import AppOverflowMenuSheet, { type OverflowMenuAction } from './components/AppOverflowMenuSheet';
 import CubeCanvas from './components/CubeCanvas';
 import CubeNotationPanel from './components/CubeNotationPanel';
+import CubeTimerOverlay from './components/CubeTimerOverlay';
+import CubeTimerSheet from './components/CubeTimerSheet';
 import HypercubeViewport, { type HypercubeViewportHandle } from './components/HypercubeViewport';
 import MagicCube4DSettingsSheet from './components/MagicCube4DSettingsSheet';
 import type { Axis, CubeSize, CubeState, Face } from './utils/cubeModel';
@@ -18,7 +22,7 @@ import {
   twistFace,
   faceAxis,
 } from './utils/cubeModel';
-import { useCubeGesture } from './hooks/useCubeGesture';
+import { createDefaultCubeViewMatrix, INITIAL_CUBE_ZOOM, useCubeGesture } from './hooks/useCubeGesture';
 import { createHypercubeViewMatrix } from './hooks/useHypercubeGesture';
 import { useMagicCube4D } from './hooks/useMagicCube4D';
 import { useTwistAnimation } from './hooks/useTwistAnimation';
@@ -31,6 +35,7 @@ import {
   mulRowVec4,
   type MagicCube4DPickInfo,
   type MagicCube4DTwistDirection,
+  MAGICCUBE4D_DEFAULT_SLICE_MASK,
   MAGICCUBE4D_FACE_COLORS,
   MAGICCUBE4D_FACE_LABELS,
   MAGICCUBE4D_SLICE_BITS,
@@ -42,6 +47,26 @@ import {
 } from './utils/magiccube4dSettings';
 import { MAGICCUBE4D_HYPERCUBE_DATA } from './utils/magiccube4dData';
 import { cloneMat3, mulVec, type Mat3 } from './utils/math3d';
+import { cloneMat4 } from './utils/math4d';
+import {
+  loadRestorableAppState,
+  loadSavedAppState,
+  normalizePersistedCubeSession,
+  normalizePersistedHypercubeSession,
+  saveAppState,
+  saveAutosavedAppState,
+  type PersistedAppState,
+  type PersistedCubeSession,
+} from './utils/persistence';
+import {
+  clearCubeTimerHistory,
+  cloneCubeTimerSession,
+  createDefaultCubeTimerSession,
+  pauseCubeTimerSession,
+  sanitizeCubeTimerSessionForPersistence,
+  startCubeTimerSession,
+  stopCubeTimerSession,
+} from './utils/cubeTimer';
 
 const SCRAMBLE_MOVES = 20;
 const GRIP_FACE_GRID_ROWS = [
@@ -87,31 +112,130 @@ type HypercubeAction = { type: 'state' } | { type: 'view'; previousViewMatrix: M
 type HypercubeRotationMode = '4d' | '3d' | null;
 const DEFAULT_CUBE_SLICE_MASK = 1;
 const DEFAULT_HYPERCUBE_ROTATION_MODE: Exclude<HypercubeRotationMode, null> = '3d';
+const AUTOSAVE_DELAY_MS = 350;
+
+type CubeSessionMap = Record<CubeSize, PersistedCubeSession>;
+
+function createDefaultCubeSession(size: CubeSize): PersistedCubeSession {
+  return {
+    cubeState: createSolvedCube(size),
+    scrambleText: '',
+    rotationMode: false,
+    sliceMask: DEFAULT_CUBE_SLICE_MASK,
+    viewMatrix: createDefaultCubeViewMatrix(),
+    zoom: INITIAL_CUBE_ZOOM,
+    timer: createDefaultCubeTimerSession(),
+  };
+}
+
+function createDefaultCubeSessions(): CubeSessionMap {
+  return {
+    2: createDefaultCubeSession(2),
+    3: createDefaultCubeSession(3),
+    4: createDefaultCubeSession(4),
+    5: createDefaultCubeSession(5),
+  };
+}
+
+function createEmptyCubeHistories(): Record<CubeSize, CubeState[]> {
+  return {
+    2: [],
+    3: [],
+    4: [],
+    5: [],
+  };
+}
+
+function cloneCubeState(state: CubeState): CubeState {
+  return state.map(cubie => ({
+    position: [...cubie.position] as [number, number, number],
+    faces: { ...cubie.faces },
+  }));
+}
+
+function cloneCubeSession(session: PersistedCubeSession): PersistedCubeSession {
+  return {
+    cubeState: cloneCubeState(session.cubeState),
+    scrambleText: session.scrambleText,
+    rotationMode: session.rotationMode,
+    sliceMask: session.sliceMask,
+    viewMatrix: cloneMat3(session.viewMatrix),
+    zoom: session.zoom,
+    timer: cloneCubeTimerSession(session.timer ?? createDefaultCubeTimerSession()),
+  };
+}
+
+function cloneCubeSessions(sessions: CubeSessionMap): CubeSessionMap {
+  return {
+    2: cloneCubeSession(sessions[2]),
+    3: cloneCubeSession(sessions[3]),
+    4: cloneCubeSession(sessions[4]),
+    5: cloneCubeSession(sessions[5]),
+  };
+}
 
 export default function Index() {
   const [mode, setMode] = useState<ScreenMode>('cube');
   const [cubeSize, setCubeSize] = useState<CubeSize>(3);
-  const [cubeState, setCubeState] = useState(() => createSolvedCube(3));
+  const [cubeSessions, setCubeSessions] = useState<CubeSessionMap>(createDefaultCubeSessions);
   const [cubeCanUndo, setCubeCanUndo] = useState(false);
-  const [scrambleText, setScrambleText] = useState('');
   const [cubeCanvasSize, setCubeCanvasSize] = useState({ width: 0, height: 0 });
-  const [cubeRotationMode, setCubeRotationMode] = useState(false);
-  const [cubeSliceMask, setCubeSliceMask] = useState(DEFAULT_CUBE_SLICE_MASK);
   const [selected4DFace, setSelected4DFace] = useState<number | null>(null);
   const [hypercubeRotationMode, setHypercubeRotationMode] = useState<HypercubeRotationMode>(DEFAULT_HYPERCUBE_ROTATION_MODE);
   const [magicCube4DSettingsOpen, setMagicCube4DSettingsOpen] = useState(false);
+  const [overflowMenuOpen, setOverflowMenuOpen] = useState(false);
+  const [infoSheetOpen, setInfoSheetOpen] = useState(false);
+  const [cubeTimerSheetOpen, setCubeTimerSheetOpen] = useState(false);
+  const [hypercubeTimerSheetOpen, setHypercubeTimerSheetOpen] = useState(false);
   const [magicCube4DSettings, setMagicCube4DSettings] = useState(DEFAULT_MAGICCUBE4D_SETTINGS);
   const [saved4DViewMatrix, setSaved4DViewMatrix] = useState<Mat3 | null>(null);
   const [show4DViewReset, setShow4DViewReset] = useState(false);
-  const cubeHistoryRef = useRef<CubeState[]>([]);
-  const lastCubeSliceMaskRef = useRef(DEFAULT_CUBE_SLICE_MASK);
+  const [hasSavedSession, setHasSavedSession] = useState(false);
+  const [persistenceReady, setPersistenceReady] = useState(false);
+  const [hypercubeTimer, setHypercubeTimer] = useState(createDefaultCubeTimerSession);
+  const cubeHistoryRef = useRef<Record<CubeSize, CubeState[]>>(createEmptyCubeHistories());
   const current4DViewMatrixRef = useRef<Mat3 | null>(null);
   const hypercubeViewportRef = useRef<HypercubeViewportHandle | null>(null);
   const hypercubeHistoryRef = useRef<HypercubeAction[]>([]);
-  const lastTurnSliceMaskRef = useRef<number>(MAGICCUBE4D_SLICE_BITS[0]);
+  const lastTurnSliceMaskRef = useRef<number>(MAGICCUBE4D_DEFAULT_SLICE_MASK);
   const [hypercubeCanUndo, setHypercubeCanUndo] = useState(false);
-  const { twistAnim, twist } = useTwistAnimation(setCubeState, previousState => {
-    cubeHistoryRef.current.push(previousState);
+  const currentCubeSession = cubeSessions[cubeSize];
+  const cubeState = currentCubeSession.cubeState;
+  const scrambleText = currentCubeSession.scrambleText;
+  const cubeRotationMode = currentCubeSession.rotationMode;
+  const cubeSliceMask = currentCubeSession.sliceMask;
+  const cubeTimer = currentCubeSession.timer ?? createDefaultCubeTimerSession();
+  const updateCubeSession = useCallback((
+    size: CubeSize,
+    updater: (session: PersistedCubeSession) => PersistedCubeSession,
+  ) => {
+    setCubeSessions(current => {
+      const nextSession = updater(current[size]);
+      if (nextSession === current[size]) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [size]: nextSession,
+      };
+    });
+  }, []);
+  const updateCurrentCubeSession = useCallback((
+    updater: (session: PersistedCubeSession) => PersistedCubeSession,
+  ) => {
+    updateCubeSession(cubeSize, updater);
+  }, [cubeSize, updateCubeSession]);
+  const setCurrentCubeState = useCallback((nextState: React.SetStateAction<CubeState>) => {
+    updateCurrentCubeSession(session => ({
+      ...session,
+      cubeState: typeof nextState === 'function'
+        ? nextState(session.cubeState)
+        : nextState,
+    }));
+  }, [updateCurrentCubeSession]);
+  const { twistAnim, twist } = useTwistAnimation(setCurrentCubeState, previousState => {
+    cubeHistoryRef.current[cubeSize].push(previousState);
     setCubeCanUndo(true);
   });
   const {
@@ -128,6 +252,7 @@ export default function Index() {
     rotateFaceToCenter,
     rotateState,
     rotateSpatialState,
+    restoreSession: restoreMagicCube4DSession,
   } = useMagicCube4D({
     twistDurationMs: magicCube4DSettings.twistDurationMs,
     animationDurationMs: magicCube4DSettings.animationDurationMs,
@@ -150,6 +275,9 @@ export default function Index() {
     current4DViewMatrixRef.current = nextViewMatrix;
     setLive4DViewMatrix(nextViewMatrix);
   }, [base4DViewMatrix]);
+  useEffect(() => {
+    setShow4DViewReset(!mat3EqualsWithinTolerance(live4DViewMatrix, base4DViewMatrix));
+  }, [base4DViewMatrix, live4DViewMatrix]);
   const displayed4DControlRows = useMemo(
     () => buildDisplayed4DControlRows(
       selected4DFace,
@@ -167,6 +295,137 @@ export default function Index() {
     [magicCube4DState],
   );
   const selected4DFaceColor = selected4DFace == null ? null : current4DFaceColors[selected4DFace];
+  const applyPersistedState = useCallback((persisted: PersistedAppState) => {
+    const next4DSettings = clampMagicCube4DSettings(persisted.hypercube.settings);
+    const nextSaved4DViewMatrix = persisted.hypercube.savedViewMatrix
+      ? cloneMat3(persisted.hypercube.savedViewMatrix)
+      : null;
+    const nextLive4DViewMatrix = nextSaved4DViewMatrix
+      ?? createHypercubeViewMatrix(next4DSettings.viewPitchDeg, next4DSettings.viewYawDeg);
+
+    cubeHistoryRef.current = createEmptyCubeHistories();
+    hypercubeHistoryRef.current = [];
+    setCubeCanUndo(false);
+    setHypercubeCanUndo(false);
+    setMagicCube4DSettingsOpen(false);
+    setOverflowMenuOpen(false);
+    setInfoSheetOpen(false);
+    setCubeTimerSheetOpen(false);
+    setHypercubeTimerSheetOpen(false);
+    setMode(persisted.mode);
+    setCubeSize(persisted.cubeSize);
+    setCubeSessions(cloneCubeSessions({
+      2: normalizePersistedCubeSession(persisted.cubes['2']),
+      3: normalizePersistedCubeSession(persisted.cubes['3']),
+      4: normalizePersistedCubeSession(persisted.cubes['4']),
+      5: normalizePersistedCubeSession(persisted.cubes['5']),
+    }));
+    const normalizedHypercube = normalizePersistedHypercubeSession(persisted.hypercube);
+    setSelected4DFace(persisted.hypercube.selectedFace);
+    setHypercubeRotationMode(persisted.hypercube.rotationMode);
+    setMagicCube4DSettings(next4DSettings);
+    setSaved4DViewMatrix(nextSaved4DViewMatrix);
+    setHypercubeTimer(cloneCubeTimerSession(normalizedHypercube.timer));
+    current4DViewMatrixRef.current = cloneMat3(nextLive4DViewMatrix);
+    setLive4DViewMatrix(cloneMat3(nextLive4DViewMatrix));
+    lastTurnSliceMaskRef.current = persisted.hypercube.lastTurnSliceMask;
+    restoreMagicCube4DSession({
+      state: [...normalizedHypercube.state],
+      sliceMask: normalizedHypercube.sliceMask,
+      rotation4d: cloneMat4(normalizedHypercube.rotation4d),
+    });
+  }, [restoreMagicCube4DSession]);
+  const buildPersistedState = useCallback((): PersistedAppState => ({
+    version: 1,
+    mode,
+    cubeSize,
+    cubes: {
+      '2': {
+        ...cloneCubeSession(cubeSessions[2]),
+        timer: sanitizeCubeTimerSessionForPersistence(cubeSessions[2].timer ?? createDefaultCubeTimerSession()),
+      },
+      '3': {
+        ...cloneCubeSession(cubeSessions[3]),
+        timer: sanitizeCubeTimerSessionForPersistence(cubeSessions[3].timer ?? createDefaultCubeTimerSession()),
+      },
+      '4': {
+        ...cloneCubeSession(cubeSessions[4]),
+        timer: sanitizeCubeTimerSessionForPersistence(cubeSessions[4].timer ?? createDefaultCubeTimerSession()),
+      },
+      '5': {
+        ...cloneCubeSession(cubeSessions[5]),
+        timer: sanitizeCubeTimerSessionForPersistence(cubeSessions[5].timer ?? createDefaultCubeTimerSession()),
+      },
+    },
+    hypercube: {
+      state: [...magicCube4DState],
+      sliceMask,
+      rotation4d: cloneMat4(rotation4d),
+      settings: { ...magicCube4DSettings },
+      savedViewMatrix: saved4DViewMatrix ? cloneMat3(saved4DViewMatrix) : null,
+      rotationMode: hypercubeRotationMode,
+      selectedFace: selected4DFace,
+      lastTurnSliceMask: lastTurnSliceMaskRef.current,
+      timer: sanitizeCubeTimerSessionForPersistence(hypercubeTimer),
+    },
+  }), [
+    cubeSessions,
+    cubeSize,
+    hypercubeTimer,
+    hypercubeRotationMode,
+    magicCube4DSettings,
+    magicCube4DState,
+    mode,
+    rotation4d,
+    saved4DViewMatrix,
+    selected4DFace,
+    sliceMask,
+  ]);
+  const persistAutosaveNow = useCallback(async () => {
+    const didSave = await saveAutosavedAppState(buildPersistedState());
+    return didSave;
+  }, [buildPersistedState]);
+  const persistSavedSessionNow = useCallback(async () => {
+    const didSave = await saveAppState(buildPersistedState());
+    setHasSavedSession(didSave);
+    return didSave;
+  }, [buildPersistedState]);
+  useEffect(() => {
+    let isMounted = true;
+
+    const restore = async () => {
+      const [savedState, persisted] = await Promise.all([
+        loadSavedAppState(),
+        loadRestorableAppState(),
+      ]);
+      if (!isMounted) {
+        return;
+      }
+
+      setHasSavedSession(savedState !== null);
+      if (persisted) {
+        applyPersistedState(persisted);
+      }
+
+      setPersistenceReady(true);
+    };
+
+    restore();
+    return () => {
+      isMounted = false;
+    };
+  }, [applyPersistedState]);
+  useEffect(() => {
+    if (!persistenceReady || twistAnim || magicCube4DAnimating) {
+      return;
+    }
+
+    const timeoutId = setTimeout(() => {
+      void persistAutosaveNow();
+    }, AUTOSAVE_DELAY_MS);
+
+    return () => clearTimeout(timeoutId);
+  }, [cubeSessions, cubeSize, hypercubeRotationMode, magicCube4DAnimating, magicCube4DSettings, magicCube4DState, mode, persistAutosaveNow, persistenceReady, rotation4d, saved4DViewMatrix, selected4DFace, sliceMask, twistAnim]);
   const cubeDisabled = !!twistAnim || mode !== 'cube';
   const cubeGesture = useCubeGesture({
     cubeState,
@@ -175,30 +434,101 @@ export default function Index() {
     height: cubeCanvasSize.height,
     onTwist: twist,
     disabled: cubeDisabled,
+    initialViewMatrix: currentCubeSession.viewMatrix,
+    initialZoom: currentCubeSession.zoom,
+    onViewStateChange: ({ viewMatrix, zoom }) => {
+      updateCurrentCubeSession(session => {
+        if (mat3EqualsWithinTolerance(session.viewMatrix, viewMatrix) && Math.abs(session.zoom - zoom) < 1e-4) {
+          return session;
+        }
+
+        return {
+          ...session,
+          viewMatrix: cloneMat3(viewMatrix),
+          zoom,
+        };
+      });
+    },
   });
   const cubeHasSliceControls = cubeSize >= 3;
   const handleCubeRotationModePress = useCallback(() => {
-    if (cubeHasSliceControls) {
-      setCubeRotationMode(true);
-      return;
-    }
-    setCubeRotationMode(current => !current);
-  }, [cubeHasSliceControls]);
+    updateCurrentCubeSession(session => ({
+      ...session,
+      rotationMode: cubeHasSliceControls ? true : !session.rotationMode,
+    }));
+  }, [cubeHasSliceControls, updateCurrentCubeSession]);
   const handleCubeSliceButtonPress = useCallback((bit: number) => {
     if (!cubeHasSliceControls) {
       return;
     }
-    setCubeRotationMode(false);
-    setCubeSliceMask(mask => {
-      const sourceMask = clampCubeSliceMask(mask === 0 ? lastCubeSliceMaskRef.current : mask, cubeSize);
+
+    updateCurrentCubeSession(session => {
+      const sourceMask = clampCubeSliceMask(session.sliceMask, cubeSize);
       const allowedBits = getCubeSliceBitMask(cubeSize);
       const nextMask = (sourceMask ^ bit) & allowedBits;
       const resolvedMask = nextMask === 0 ? bit : nextMask;
-      const clampedMask = clampCubeSliceMask(resolvedMask, cubeSize);
-      lastCubeSliceMaskRef.current = clampedMask;
-      return clampedMask;
+      return {
+        ...session,
+        rotationMode: false,
+        sliceMask: clampCubeSliceMask(resolvedMask, cubeSize),
+      };
     });
-  }, [cubeHasSliceControls, cubeSize]);
+  }, [cubeHasSliceControls, cubeSize, updateCurrentCubeSession]);
+  const pauseTimerForSize = useCallback((size: CubeSize) => {
+    updateCubeSession(size, session => {
+      const timer = session.timer ?? createDefaultCubeTimerSession();
+      if (timer.status !== 'running') {
+        return session;
+      }
+
+      return {
+        ...session,
+        timer: pauseCubeTimerSession(timer),
+      };
+    });
+  }, [updateCubeSession]);
+  const handleCubeTimerStart = useCallback(() => {
+    updateCurrentCubeSession(session => ({
+      ...session,
+      timer: startCubeTimerSession(session.timer ?? createDefaultCubeTimerSession()),
+    }));
+  }, [updateCurrentCubeSession]);
+  const handleCubeTimerPause = useCallback(() => {
+    updateCurrentCubeSession(session => ({
+      ...session,
+      timer: pauseCubeTimerSession(session.timer ?? createDefaultCubeTimerSession()),
+    }));
+  }, [updateCurrentCubeSession]);
+  const handleCubeTimerStop = useCallback(() => {
+    updateCurrentCubeSession(session => ({
+      ...session,
+      timer: stopCubeTimerSession(
+        session.timer ?? createDefaultCubeTimerSession(),
+        session.scrambleText,
+      ),
+    }));
+  }, [updateCurrentCubeSession]);
+  const handleClearCubeTimerHistory = useCallback(() => {
+    updateCurrentCubeSession(session => ({
+      ...session,
+      timer: clearCubeTimerHistory(session.timer ?? createDefaultCubeTimerSession()),
+    }));
+  }, [updateCurrentCubeSession]);
+  const pauseHypercubeTimer = useCallback(() => {
+    setHypercubeTimer(current => pauseCubeTimerSession(current));
+  }, []);
+  const handleHypercubeTimerStart = useCallback(() => {
+    setHypercubeTimer(current => startCubeTimerSession(current));
+  }, []);
+  const handleHypercubeTimerPause = useCallback(() => {
+    setHypercubeTimer(current => pauseCubeTimerSession(current));
+  }, []);
+  const handleHypercubeTimerStop = useCallback(() => {
+    setHypercubeTimer(current => stopCubeTimerSession(current, 'Magic Cube 4D'));
+  }, []);
+  const handleClearHypercubeTimerHistory = useCallback(() => {
+    setHypercubeTimer(current => clearCubeTimerHistory(current));
+  }, []);
   const activateDefaultRotationMode = useCallback(() => {
     setHypercubeRotationMode(DEFAULT_HYPERCUBE_ROTATION_MODE);
     setSelected4DFace(null);
@@ -261,35 +591,40 @@ export default function Index() {
     const cloned = cloneMat3(nextViewMatrix);
     current4DViewMatrixRef.current = cloned;
     setLive4DViewMatrix(cloned);
-    setShow4DViewReset(!mat3EqualsWithinTolerance(nextViewMatrix, base4DViewMatrix));
-  }, [base4DViewMatrix]);
+  }, []);
   const actionDisabled = mode === 'cube' ? !!twistAnim : magicCube4DAnimating;
+  const modeSwitchDisabled = !!twistAnim || magicCube4DAnimating;
+  const persistenceActionDisabled = !persistenceReady || !!twistAnim || magicCube4DAnimating;
 
   const handleSizeChange = (size: CubeSize) => {
-    if (!!twistAnim) return;
+    if (modeSwitchDisabled) return;
+    if (mode === 'cube' && size !== cubeSize) {
+      pauseTimerForSize(cubeSize);
+    } else if (mode === 'hypercube') {
+      pauseHypercubeTimer();
+      setHypercubeTimerSheetOpen(false);
+    }
     setMode('cube');
     if (size === cubeSize) return;
     setCubeSize(size);
-    setCubeState(createSolvedCube(size));
-    cubeHistoryRef.current = [];
-    setCubeCanUndo(false);
-    setScrambleText('');
-    setCubeRotationMode(false);
-    setCubeSliceMask(DEFAULT_CUBE_SLICE_MASK);
-    lastCubeSliceMaskRef.current = DEFAULT_CUBE_SLICE_MASK;
+    setCubeCanUndo(cubeHistoryRef.current[size].length > 0);
   };
 
   const handleHypercubeMode = () => {
-    if (!!twistAnim) return;
+    if (modeSwitchDisabled) return;
+    pauseTimerForSize(cubeSize);
+    setOverflowMenuOpen(false);
+    setInfoSheetOpen(false);
+    setCubeTimerSheetOpen(false);
     setMode('hypercube');
   };
 
-  const handleOpen4DSettings = () => {
+  const handleOpen4DSettings = useCallback(() => {
     if (mode !== 'hypercube') {
       return;
     }
     setMagicCube4DSettingsOpen(true);
-  };
+  }, [mode]);
   const handleUseCurrent4DView = useCallback(() => {
     const currentViewMatrix = current4DViewMatrixRef.current;
     if (!currentViewMatrix) {
@@ -303,17 +638,40 @@ export default function Index() {
   const handleClearSaved4DView = useCallback(() => {
     setSaved4DViewMatrix(null);
   }, []);
+  const handleSaveSession = useCallback(() => {
+    if (persistenceActionDisabled) {
+      return;
+    }
 
-  const handleReset = () => {
+    void persistSavedSessionNow();
+  }, [persistSavedSessionNow, persistenceActionDisabled]);
+  const handleLoadSession = useCallback(async () => {
+    if (persistenceActionDisabled) {
+      return;
+    }
+
+    const persisted = await loadSavedAppState();
+    if (!persisted) {
+      setHasSavedSession(false);
+      return;
+    }
+
+    applyPersistedState(persisted);
+    setHasSavedSession(true);
+  }, [applyPersistedState, persistenceActionDisabled]);
+
+  const handleReset = useCallback(() => {
     if (actionDisabled) return;
     if (mode === 'cube') {
-      setCubeState(createSolvedCube(cubeSize));
-      cubeHistoryRef.current = [];
+      updateCurrentCubeSession(session => ({
+        ...session,
+        cubeState: createSolvedCube(cubeSize),
+        scrambleText: '',
+        rotationMode: false,
+        sliceMask: DEFAULT_CUBE_SLICE_MASK,
+      }));
+      cubeHistoryRef.current[cubeSize] = [];
       setCubeCanUndo(false);
-      setScrambleText('');
-      setCubeRotationMode(false);
-      setCubeSliceMask(DEFAULT_CUBE_SLICE_MASK);
-      lastCubeSliceMaskRef.current = DEFAULT_CUBE_SLICE_MASK;
       return;
     }
 
@@ -321,9 +679,17 @@ export default function Index() {
     setHypercubeCanUndo(false);
     setHypercubeRotationMode(DEFAULT_HYPERCUBE_ROTATION_MODE);
     setSelected4DFace(null);
+    lastTurnSliceMaskRef.current = MAGICCUBE4D_DEFAULT_SLICE_MASK;
     setSliceMask(0);
     resetMagicCube4D();
-  };
+  }, [
+    actionDisabled,
+    cubeSize,
+    mode,
+    resetMagicCube4D,
+    setSliceMask,
+    updateCurrentCubeSession,
+  ]);
 
   const handleScramble = () => {
     if (actionDisabled) return;
@@ -338,13 +704,15 @@ export default function Index() {
     }
 
     const scramble = createScramble(SCRAMBLE_MOVES, cubeSize);
-    cubeHistoryRef.current = [];
+    cubeHistoryRef.current[cubeSize] = [];
     setCubeCanUndo(false);
-    setCubeState(applyMoves(createSolvedCube(cubeSize), scramble.moves));
-    setScrambleText(scramble.notation);
-    setCubeRotationMode(false);
-    setCubeSliceMask(DEFAULT_CUBE_SLICE_MASK);
-    lastCubeSliceMaskRef.current = DEFAULT_CUBE_SLICE_MASK;
+    updateCurrentCubeSession(session => ({
+      ...session,
+      cubeState: applyMoves(createSolvedCube(cubeSize), scramble.moves),
+      scrambleText: scramble.notation,
+      rotationMode: false,
+      sliceMask: DEFAULT_CUBE_SLICE_MASK,
+    }));
   };
 
   const handleUndo = () => {
@@ -352,12 +720,15 @@ export default function Index() {
       if (!!twistAnim) {
         return;
       }
-      const previous = cubeHistoryRef.current.pop();
+      const previous = cubeHistoryRef.current[cubeSize].pop();
       if (!previous) {
         return;
       }
-      setCubeState(previous);
-      setCubeCanUndo(cubeHistoryRef.current.length > 0);
+      updateCurrentCubeSession(session => ({
+        ...session,
+        cubeState: previous,
+      }));
+      setCubeCanUndo(cubeHistoryRef.current[cubeSize].length > 0);
       return;
     }
 
@@ -422,6 +793,121 @@ export default function Index() {
       return 0;
     });
   }, [setSliceMask]);
+  const openCubeHistory = useCallback(() => {
+    setCubeTimerSheetOpen(true);
+  }, []);
+  const openHypercubeHistory = useCallback(() => {
+    setHypercubeTimerSheetOpen(true);
+  }, []);
+  const openMenuThen = useCallback((action: () => void) => {
+    setOverflowMenuOpen(false);
+    setTimeout(action, 120);
+  }, []);
+  const infoSections = useMemo<InfoSection[]>(() => {
+    if (mode === 'cube') {
+      return [
+        {
+          key: 'scramble',
+          title: 'Scramble',
+          body: scrambleText.trim().length > 0
+            ? scrambleText
+            : `No scramble saved. Current mode: ${cubeRotationMode ? 'cube rotation' : `notation turns with slices ${formatCubeSliceMask(cubeSliceMask, cubeSize)}`}.`,
+        },
+        {
+          key: 'controls',
+          title: 'Controls',
+          body: 'Drag to rotate the cube. Use notation buttons below for turns, slice selection, and view rotation. The timer overlay stays on the canvas: play starts or resumes, pause freezes the current solve, and stop records it.',
+        },
+        {
+          key: 'session',
+          title: 'Session',
+          body: 'Undo returns the previous cube state. Shuffle makes a fresh scramble. Save and Load are in the menu, and History opens your recorded solve list and personal best.',
+        },
+      ];
+    }
+
+    return [
+      {
+        key: 'controls',
+        title: 'Controls',
+        body: 'Tap for counterclockwise turns, long-press for clockwise turns, and double-tap to center a face. Slice chips switch active layers, and 3D or 4D rotation modes change what the lower controls do.',
+      },
+      {
+        key: 'timer',
+        title: 'Timer',
+        body: 'The canvas timer works like the 3D one: play starts, pause freezes, and stop records the solve. History in the menu shows your 4D solve list and best time.',
+      },
+      {
+        key: 'session',
+        title: 'Session',
+        body: 'Undo reverts the last 4D move. Shuffle creates a new randomized state. Settings, Save, Load, Reset, and History all live in the menu to keep the top bar compact.',
+      },
+    ];
+  }, [cubeRotationMode, cubeSize, cubeSliceMask, mode, scrambleText]);
+  const overflowActions = useMemo<OverflowMenuAction[]>(() => {
+    const baseActions: OverflowMenuAction[] = [
+      {
+        key: 'info',
+        label: 'Info',
+        icon: 'information-circle-outline',
+        onPress: () => openMenuThen(() => setInfoSheetOpen(true)),
+      },
+      {
+        key: 'save',
+        label: 'Save session',
+        icon: 'save-outline',
+        onPress: () => openMenuThen(handleSaveSession),
+        disabled: persistenceActionDisabled,
+      },
+      {
+        key: 'load',
+        label: 'Load session',
+        icon: 'download-outline',
+        onPress: () => openMenuThen(() => {
+          void handleLoadSession();
+        }),
+        disabled: !hasSavedSession || persistenceActionDisabled,
+      },
+      {
+        key: 'history',
+        label: mode === 'cube' ? `${cubeSize}x${cubeSize} history` : '4D history',
+        icon: 'time-outline',
+        onPress: () => openMenuThen(mode === 'cube' ? openCubeHistory : openHypercubeHistory),
+      },
+      {
+        key: 'reset',
+        label: 'Reset puzzle',
+        icon: 'refresh',
+        onPress: () => openMenuThen(handleReset),
+        disabled: actionDisabled,
+        tone: 'danger',
+      },
+    ];
+
+    if (mode === 'hypercube') {
+      baseActions.splice(3, 0, {
+        key: 'settings',
+        label: '4D settings',
+        icon: 'options-outline',
+        onPress: () => openMenuThen(handleOpen4DSettings),
+      });
+    }
+
+    return baseActions;
+  }, [
+    actionDisabled,
+    cubeSize,
+    handleLoadSession,
+    handleOpen4DSettings,
+    handleReset,
+    handleSaveSession,
+    hasSavedSession,
+    mode,
+    openCubeHistory,
+    openHypercubeHistory,
+    openMenuThen,
+    persistenceActionDisabled,
+  ]);
 
   return (
     <GestureHandlerRootView style={styles.root}>
@@ -437,7 +923,7 @@ export default function Index() {
                   i === 0 && styles.modeButtonFirst,
                 ]}
                 onPress={() => handleSizeChange(size)}
-                disabled={!!twistAnim}
+                disabled={modeSwitchDisabled}
               >
                 <Text
                   style={[
@@ -456,7 +942,7 @@ export default function Index() {
                 mode === 'hypercube' && styles.modeButtonActive,
               ]}
               onPress={handleHypercubeMode}
-              disabled={!!twistAnim}
+              disabled={modeSwitchDisabled}
             >
               <Text
                 style={[
@@ -469,7 +955,7 @@ export default function Index() {
             </Pressable>
           </View>
           <View style={styles.topBar}>
-            <View style={styles.actionGroup}>
+            <View style={styles.topBarLeft}>
               <ActionButton
                 icon="arrow-undo"
                 label="Undo"
@@ -477,39 +963,18 @@ export default function Index() {
                 disabled={mode === 'cube' ? !cubeCanUndo || !!twistAnim : !hypercubeCanUndo || magicCube4DAnimating}
               />
               <ActionButton
-                icon="refresh"
-                label="Reset"
-                onPress={handleReset}
-                disabled={actionDisabled}
-              />
-            </View>
-            <Text
-              style={styles.scrambleText}
-              numberOfLines={2}
-              adjustsFontSizeToFit
-              minimumFontScale={0.7}
-            >
-              {mode === 'cube'
-                ? (
-                  scrambleText
-                  || `3D Cube  •  ${cubeRotationMode ? 'cube rotation' : `notation turns • slices ${formatCubeSliceMask(cubeSliceMask, cubeSize)}`}`
-                )
-                : `Magic Cube 4D  •  tap CCW  •  hold CW  •  dbl tap center  •  slices ${sliceMask === 0 ? 'off' : MAGICCUBE4D_SLICE_LABELS[sliceMask]}`}
-            </Text>
-            <View style={styles.actionGroup}>
-              {mode === 'hypercube' && (
-                <ActionButton
-                  icon="options-outline"
-                  label="Settings"
-                  onPress={handleOpen4DSettings}
-                  disabled={false}
-                />
-              )}
-              <ActionButton
                 icon="shuffle"
                 label="Scramble"
                 onPress={handleScramble}
                 disabled={actionDisabled}
+              />
+            </View>
+            <View style={styles.topBarRight}>
+              <ActionButton
+                icon="ellipsis-horizontal"
+                label="Menu"
+                onPress={() => setOverflowMenuOpen(true)}
+                disabled={false}
               />
             </View>
           </View>
@@ -536,30 +1001,44 @@ export default function Index() {
                     width={cubeCanvasSize.width}
                     height={cubeCanvasSize.height}
                   />
+                  <CubeTimerOverlay
+                    timer={cubeTimer}
+                    onStart={handleCubeTimerStart}
+                    onPause={handleCubeTimerPause}
+                    onStop={handleCubeTimerStop}
+                  />
                 </View>
               </GestureDetector>
             ) : (
-              <HypercubeViewport
-                ref={hypercubeViewportRef}
-                state={magicCube4DState}
-                rotation4d={rotation4d}
-                twistAnimation={magicCube4DTwistAnimation}
-                settings={magicCube4DSettings}
-                dragSensitivity={magicCube4DSettings.dragSensitivity}
-                viewPitchDeg={magicCube4DSettings.viewPitchDeg}
-                viewYawDeg={magicCube4DSettings.viewYawDeg}
-                initialViewMatrix={saved4DViewMatrix ?? undefined}
-                onViewMatrixChange={handle4DViewMatrixChange}
-                onTap={handleHypercubeTap}
-                onLongTap={handleHypercubeLongTap}
-                onDoubleTap={handleHypercubeDoubleTap}
-                onPickReady={(picker) => {
-                  magicCube4DPickRef.current = picker;
-                }}
-                disabled={magicCube4DAnimating}
-                showResetButton={show4DViewReset}
-                resetViewMatrix={base4DViewMatrix}
-              />
+              <View style={styles.canvas}>
+                <HypercubeViewport
+                  ref={hypercubeViewportRef}
+                  state={magicCube4DState}
+                  rotation4d={rotation4d}
+                  twistAnimation={magicCube4DTwistAnimation}
+                  settings={magicCube4DSettings}
+                  dragSensitivity={magicCube4DSettings.dragSensitivity}
+                  viewPitchDeg={magicCube4DSettings.viewPitchDeg}
+                  viewYawDeg={magicCube4DSettings.viewYawDeg}
+                  initialViewMatrix={saved4DViewMatrix ?? undefined}
+                  onViewMatrixChange={handle4DViewMatrixChange}
+                  onTap={handleHypercubeTap}
+                  onLongTap={handleHypercubeLongTap}
+                  onDoubleTap={handleHypercubeDoubleTap}
+                  onPickReady={(picker) => {
+                    magicCube4DPickRef.current = picker;
+                  }}
+                  disabled={magicCube4DAnimating}
+                  showResetButton={show4DViewReset}
+                  resetViewMatrix={base4DViewMatrix}
+                />
+                <CubeTimerOverlay
+                  timer={hypercubeTimer}
+                  onStart={handleHypercubeTimerStart}
+                  onPause={handleHypercubeTimerPause}
+                  onStop={handleHypercubeTimerStop}
+                />
+              </View>
             )}
           </View>
           {mode === 'cube' && (
@@ -713,6 +1192,31 @@ export default function Index() {
               setSaved4DViewMatrix(null);
               setMagicCube4DSettings(DEFAULT_MAGICCUBE4D_SETTINGS);
             }}
+          />
+          <AppOverflowMenuSheet
+            visible={overflowMenuOpen}
+            actions={overflowActions}
+            onClose={() => setOverflowMenuOpen(false)}
+          />
+          <AppInfoSheet
+            visible={infoSheetOpen}
+            title={mode === 'cube' ? `${cubeSize}x${cubeSize} Info` : 'Magic Cube 4D Info'}
+            sections={infoSections}
+            onClose={() => setInfoSheetOpen(false)}
+          />
+          <CubeTimerSheet
+            visible={mode === 'cube' && cubeTimerSheetOpen}
+            title={`${cubeSize}x${cubeSize} Timer`}
+            timer={cubeTimer}
+            onClose={() => setCubeTimerSheetOpen(false)}
+            onClearHistory={handleClearCubeTimerHistory}
+          />
+          <CubeTimerSheet
+            visible={mode === 'hypercube' && hypercubeTimerSheetOpen}
+            title="Magic Cube 4D Timer"
+            timer={hypercubeTimer}
+            onClose={() => setHypercubeTimerSheetOpen(false)}
+            onClearHistory={handleClearHypercubeTimerHistory}
           />
         </SafeAreaView>
       </BottomSheetModalProvider>
@@ -1180,14 +1684,20 @@ const styles = StyleSheet.create({
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 14,
     paddingTop: 10,
     paddingBottom: 10,
     gap: 12,
   },
-  actionGroup: {
+  topBarLeft: {
     flexDirection: 'row',
     gap: 10,
+    flexShrink: 0,
+  },
+  topBarRight: {
+    flexDirection: 'row',
+    flexShrink: 0,
   },
   sliceBar: {
     flexDirection: 'row',
@@ -1328,7 +1838,7 @@ const styles = StyleSheet.create({
     lineHeight: 14,
     textAlign: 'center',
     opacity: 0.9,
-    paddingHorizontal: 4,
+    paddingHorizontal: 8,
   },
   canvas: {
     flex: 1,

@@ -14,6 +14,13 @@ import {
   type MagicCube4DTwistDirection,
   type Mat4,
 } from '../utils/magiccube4d';
+import { cloneMat4 } from '../utils/math4d';
+
+export interface MagicCube4DSessionSnapshot {
+  state: number[];
+  sliceMask: number;
+  rotation4d: Mat4;
+}
 interface Params {
   twistDurationMs?: number;
   animationDurationMs?: number;
@@ -233,6 +240,19 @@ export function useMagicCube4D({
     twistFrameRef.current = requestAnimationFrame(tick);
   }, [animationDurationMs, onStateCommit]);
 
+  const restoreSession = useCallback((session: MagicCube4DSessionSnapshot) => {
+    if (viewFrameRef.current || twistFrameRef.current) {
+      return;
+    }
+
+    historyRef.current = [];
+    setCanUndo(false);
+    setTwistAnimation(null);
+    setState([...session.state]);
+    setSliceMask(session.sliceMask);
+    setBaseView(cloneMat4(session.rotation4d));
+  }, []);
+
   return {
     state,
     sliceMask,
@@ -249,6 +269,7 @@ export function useMagicCube4D({
     rotateFaceToCenter,
     rotateState,
     rotateSpatialState,
+    restoreSession,
   };
 }
 
