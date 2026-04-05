@@ -55,6 +55,7 @@ const GLOBAL_4D_AXIS_OPTIONS = [
 ] as const;
 type ScreenMode = 'cube' | 'hypercube';
 type HypercubeAction = { type: 'state' } | { type: 'view'; previousViewMatrix: Mat3 };
+type HypercubeRotationMode = '4d' | '3d';
 
 export default function Index() {
   const { width } = useWindowDimensions();
@@ -63,8 +64,10 @@ export default function Index() {
   const [cubeState, setCubeState] = useState(() => createSolvedCube(3));
   const [cubeCanUndo, setCubeCanUndo] = useState(false);
   const [scrambleText, setScrambleText] = useState('');
-  const [canvasSize, setCanvasSize] = useState({ width, height: 0 });
+  const [cubeCanvasSize, setCubeCanvasSize] = useState({ width, height: 0 });
+  const [hypercubeCanvasSize, setHypercubeCanvasSize] = useState({ width, height: 0 });
   const [selected4DFace, setSelected4DFace] = useState<number | null>(null);
+  const [hypercubeRotationMode, setHypercubeRotationMode] = useState<HypercubeRotationMode>('4d');
   const [magicCube4DSettingsOpen, setMagicCube4DSettingsOpen] = useState(false);
   const [magicCube4DSettings, setMagicCube4DSettings] = useState(DEFAULT_MAGICCUBE4D_SETTINGS);
   const [saved4DViewMatrix, setSaved4DViewMatrix] = useState<Mat3 | null>(null);
@@ -89,6 +92,7 @@ export default function Index() {
     twistGrip,
     rotateFaceToCenter,
     rotateState,
+    rotateSpatialState,
   } = useMagicCube4D({
     twistDurationMs: magicCube4DSettings.twistDurationMs,
     animationDurationMs: magicCube4DSettings.animationDurationMs,
@@ -112,7 +116,7 @@ export default function Index() {
   );
   const cubeDisabled = !!twistAnim || mode !== 'cube';
   const cubeGesture = useCubeGesture({
-    cubeState, cubeSize, width: canvasSize.width, height: canvasSize.height,
+    cubeState, cubeSize, width: cubeCanvasSize.width, height: cubeCanvasSize.height,
     onTwist: twist, disabled: cubeDisabled,
   });
   const select4DFace = useCallback((faceIndex: number) => {
@@ -160,6 +164,7 @@ export default function Index() {
 
   const activeGesture = mode === 'cube' ? cubeGesture : previewGesture;
   const actionDisabled = mode === 'cube' ? !!twistAnim : magicCube4DAnimating;
+  const activeCanvasSize = mode === 'cube' ? cubeCanvasSize : hypercubeCanvasSize;
 
   const handleSizeChange = (size: CubeSize) => {
     if (!!twistAnim) return;
@@ -174,6 +179,7 @@ export default function Index() {
 
   const handleHypercubeMode = () => {
     if (!!twistAnim) return;
+    setHypercubeCanvasSize(current => ({ width: current.width || width, height: 0 }));
     setMode('hypercube');
   };
 
@@ -262,7 +268,11 @@ export default function Index() {
     dir: -1 | 1,
   ) => {
     if (selected4DFace == null) {
-      rotateState(option.axisIndex, dir);
+      if (hypercubeRotationMode === '4d') {
+        rotateState(option.axisIndex, dir);
+      } else {
+        rotateSpatialState(option.axisIndex, dir);
+      }
       return;
     }
 
@@ -271,7 +281,7 @@ export default function Index() {
     }
 
     twistGrip(dir < 0 ? option.oppositeGripIndex : option.gripIndex, 1);
-  }, [rotateState, selected4DFace, twistGrip]);
+  }, [hypercubeRotationMode, rotateSpatialState, rotateState, selected4DFace, twistGrip]);
 
   return (
     <GestureHandlerRootView style={styles.root}>
@@ -365,11 +375,19 @@ export default function Index() {
               style={styles.canvas}
               onLayout={e => {
                 const { width: nextWidth, height: nextHeight } = e.nativeEvent.layout;
-                setCanvasSize(current => (
-                  current.width === nextWidth && current.height === nextHeight
-                    ? current
-                    : { width: nextWidth, height: nextHeight }
-                ));
+                if (mode === 'cube') {
+                  setCubeCanvasSize(current => (
+                    current.width === nextWidth && current.height === nextHeight
+                      ? current
+                      : { width: nextWidth, height: nextHeight }
+                  ));
+                } else {
+                  setHypercubeCanvasSize(current => (
+                    current.width === nextWidth && current.height === nextHeight
+                      ? current
+                      : { width: nextWidth, height: nextHeight }
+                  ));
+                }
               }}
             >
               {mode === 'cube' ? (
@@ -379,16 +397,17 @@ export default function Index() {
                   viewMatrix={activeGesture.viewMatrix}
                   zoom={activeGesture.zoom}
                   twistAnim={twistAnim}
-                  width={canvasSize.width}
-                  height={canvasSize.height}
+                  width={activeCanvasSize.width}
+                  height={activeCanvasSize.height}
                 />
               ) : (
                 <MagicCube4DCanvas
+                  key={`hypercube-${activeCanvasSize.width}x${activeCanvasSize.height}`}
                   state={magicCube4DState}
                   viewMatrix={activeGesture.viewMatrix}
                   zoom={activeGesture.zoom}
-                  width={canvasSize.width}
-                  height={canvasSize.height}
+                  width={activeCanvasSize.width}
+                  height={activeCanvasSize.height}
                   rotation4d={rotation4d}
                   twistAnimation={magicCube4DTwistAnimation}
                   settings={magicCube4DSettings}
@@ -427,6 +446,40 @@ export default function Index() {
                     </Pressable>
                   );
                 })}
+                <Pressable
+                  style={[
+                    styles.sliceButton,
+                    hypercubeRotationMode === '4d' && styles.sliceButtonActive,
+                  ]}
+                  onPress={() => setHypercubeRotationMode('4d')}
+                  disabled={magicCube4DAnimating}
+                >
+                  <Text
+                    style={[
+                      styles.sliceButtonText,
+                      hypercubeRotationMode === '4d' && styles.sliceButtonTextActive,
+                    ]}
+                  >
+                    4D Rot
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[
+                    styles.sliceButton,
+                    hypercubeRotationMode === '3d' && styles.sliceButtonActive,
+                  ]}
+                  onPress={() => setHypercubeRotationMode('3d')}
+                  disabled={magicCube4DAnimating}
+                >
+                  <Text
+                    style={[
+                      styles.sliceButtonText,
+                      hypercubeRotationMode === '3d' && styles.sliceButtonTextActive,
+                    ]}
+                  >
+                    3D Rot
+                  </Text>
+                </Pressable>
               </View>
               <View style={styles.bottomControls}>
                 <View style={styles.bottomControlSplit}>

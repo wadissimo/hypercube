@@ -7,11 +7,31 @@ export type Mat4 = [Vec4, Vec4, Vec4, Vec4];
 type Axis4 = 0 | 1 | 2 | 3;
 
 export interface MagicCube4DTwistAnimation {
+  kind: 'twist';
   gripIndex: number;
   dir: MagicCube4DTwistDirection;
   sliceMask: number;
   progress: number;
 }
+
+export interface MagicCube4DCubeRotationAnimation {
+  kind: 'cubeRotation';
+  axisIndex: 0 | 1 | 2;
+  dir: -1 | 1;
+  progress: number;
+}
+
+export interface MagicCube4DSpatialRotationAnimation {
+  kind: 'spatialRotation';
+  axisIndex: 0 | 1 | 2;
+  dir: -1 | 1;
+  progress: number;
+}
+
+export type MagicCube4DAnimation =
+  | MagicCube4DTwistAnimation
+  | MagicCube4DCubeRotationAnimation
+  | MagicCube4DSpatialRotationAnimation;
 
 export type MagicCube4DTwistDirection = -1 | 1 | 2;
 
@@ -76,6 +96,7 @@ const vertexToSticker = buildVertexToSticker();
 const faceCenterStickerMap = buildFaceCenterStickerMap();
 const twistDestinationCache = new Map<string, number[]>();
 const cubeRotationDestinationCache = new Map<string, number[]>();
+const spatialRotationDestinationCache = new Map<string, number[]>();
 const stickerGripMap = buildStickerGripMap();
 const faceTwistStickerMap = buildFaceTwistStickerMap();
 const faceTwistAxisMap = buildFaceTwistAxisMap();
@@ -187,11 +208,26 @@ export function applyCubeRotationToState(
   return next;
 }
 
+export function applySpatialRotationToState(
+  state: number[],
+  axisIndex: 0 | 1 | 2,
+  dir: -1 | 1,
+): number[] {
+  const destinations = getSpatialRotationDestinations(axisIndex, dir);
+  const next = [...state];
+
+  for (let stickerIndex = 0; stickerIndex < state.length; stickerIndex++) {
+    next[destinations[stickerIndex]] = state[stickerIndex];
+  }
+
+  return next;
+}
+
 export function buildMagicCube4DFrame(
   state: number[],
   rotation4d: Mat4,
   viewMatrix: Mat3,
-  animation: MagicCube4DTwistAnimation | null,
+  animation: MagicCube4DAnimation | null,
   width: number,
   height: number,
   zoomScale = 1,
@@ -629,6 +665,36 @@ function getCubeRotationDestinations(axisIndex: 0 | 1 | 2, dir: -1 | 1): number[
   return destinations;
 }
 
+function getSpatialRotationDestinations(axisIndex: 0 | 1 | 2, dir: -1 | 1): number[] {
+  const key = `${axisIndex}:${dir}`;
+  const cached = spatialRotationDestinationCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const rotation = buildSpatialRotationForAxis(axisIndex, dir * (Math.PI / 2));
+  const destinations = DATA.stickerCenters.map((center, stickerIndex) => (
+    findClosestStickerIndex(
+      mulRowVec4(center as Vec4, rotation),
+      stickerIndex,
+      axisIndex,
+      dir,
+    )
+  ));
+
+  const seen = new Set<number>();
+  for (let stickerIndex = 0; stickerIndex < destinations.length; stickerIndex++) {
+    const destination = destinations[stickerIndex];
+    if (seen.has(destination)) {
+      throw new Error(`Duplicate spatial destination ${destination} for axis ${axisIndex} dir ${dir}`);
+    }
+    seen.add(destination);
+  }
+
+  spatialRotationDestinationCache.set(key, destinations);
+  return destinations;
+}
+
 function findClosestStickerIndex(target: Vec4, stickerIndex: number, gripIndex: number, dir: MagicCube4DTwistDirection): number {
   let bestIndex = -1;
   let bestDistance = Infinity;
@@ -709,6 +775,17 @@ function planeRotation4Row(axisA: 0 | 1 | 2 | 3, axisB: 0 | 1 | 2 | 3, angle: nu
   matrix[axisB][axisA] = -s;
   matrix[axisB][axisB] = c;
   return matrix;
+}
+
+function buildSpatialRotationForAxis(axisIndex: 0 | 1 | 2, angle: number): Mat4 {
+  switch (axisIndex) {
+    case 0:
+      return planeRotation4Row(1, 2, angle);
+    case 1:
+      return planeRotation4Row(2, 0, angle);
+    case 2:
+      return planeRotation4Row(0, 1, angle);
+  }
 }
 
 function transpose4(matrix: Mat4): Mat4 {
@@ -863,10 +940,26 @@ function computeRestVerts(faceShrink: number, stickerShrink: number): Vec4[] {
 
 function applyPartialTwistToVerts(
   restVerts: Vec4[],
-  animation: MagicCube4DTwistAnimation | null,
+  animation: MagicCube4DAnimation | null,
 ): Vec4[] {
   if (!animation) {
     return restVerts;
+  }
+
+  if (animation.kind === 'cubeRotation') {
+    const rotation = buildRotationForAxis(
+      animation.axisIndex,
+      animation.dir * (Math.PI / 2) * animation.progress,
+    );
+    return restVerts.map(vertex => mulRowVec4(vertex, rotation));
+  }
+
+  if (animation.kind === 'spatialRotation') {
+    const rotation = buildSpatialRotationForAxis(
+      animation.axisIndex,
+      animation.dir * (Math.PI / 2) * animation.progress,
+    );
+    return restVerts.map(vertex => mulRowVec4(vertex, rotation));
   }
 
   const twistMat = getTwistMatrix(animation.gripIndex, animation.dir, animation.progress);

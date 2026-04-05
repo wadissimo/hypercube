@@ -5,8 +5,8 @@ import * as THREE from 'three';
 import type { Mat3 } from '../utils/math3d';
 import {
   buildMagicCube4DFrame,
+  type MagicCube4DAnimation,
   type MagicCube4DPickInfo,
-  type MagicCube4DTwistAnimation,
   type Mat4,
 } from '../utils/magiccube4d';
 import type { MagicCube4DSettings } from '../utils/magiccube4dSettings';
@@ -18,7 +18,7 @@ interface Props {
   width: number;
   height: number;
   rotation4d: Mat4;
-  twistAnimation: MagicCube4DTwistAnimation | null;
+  twistAnimation: MagicCube4DAnimation | null;
   settings: MagicCube4DSettings;
   onPickReady?: (picker: (x: number, y: number) => MagicCube4DPickInfo | null) => void;
 }
