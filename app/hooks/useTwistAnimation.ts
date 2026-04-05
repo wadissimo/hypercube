@@ -15,14 +15,16 @@ export function useTwistAnimation(
   const [twistAnim, setTwistAnim] = useState<TwistAnimState | null>(null);
   const animRef = useRef<number | null>(null);
 
-  const twist = useCallback((face: Face, clockwise: boolean, layers: number[]) => {
+  const twist = useCallback((face: Face, clockwise: boolean, layers: number[], turns: 1 | 2 = 1) => {
     if (animRef.current) return;
 
     const startTime = Date.now();
+    const targetAngle = (Math.PI / 2) * turns;
+    const duration = DURATION * turns;
 
     const tick = () => {
-      const progress = Math.min((Date.now() - startTime) / DURATION, 1);
-      const angle = easeOutCubic(progress) * (Math.PI / 2);
+      const progress = Math.min((Date.now() - startTime) / duration, 1);
+      const angle = easeOutCubic(progress) * targetAngle;
 
       if (progress < 1) {
         setTwistAnim({ face, clockwise, angle, layers });
@@ -30,7 +32,10 @@ export function useTwistAnimation(
       } else {
         setTwistAnim(null);
         setCubeState(prev => {
-          const next = twistFace(prev, face, clockwise, layers);
+          let next = prev;
+          for (let turn = 0; turn < turns; turn++) {
+            next = twistFace(next, face, clockwise, layers);
+          }
           onTwistComplete?.(prev, next);
           return next;
         });

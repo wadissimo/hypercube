@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import CubeCanvas from './components/CubeCanvas';
+import CubeNotationPanel from './components/CubeNotationPanel';
 import HypercubeViewport, { type HypercubeViewportHandle } from './components/HypercubeViewport';
 import MagicCube4DSettingsSheet from './components/MagicCube4DSettingsSheet';
 import type { Axis, CubeSize, CubeState, Face } from './utils/cubeModel';
@@ -12,9 +13,10 @@ import {
   ALL_FACES,
   SUPPORTED_CUBE_SIZES,
   createSolvedCube,
+  faceLayers,
+  faceSign,
   twistFace,
   faceAxis,
-  faceLayers,
 } from './utils/cubeModel';
 import { useCubeGesture } from './hooks/useCubeGesture';
 import { createHypercubeViewMatrix } from './hooks/useHypercubeGesture';
@@ -83,6 +85,7 @@ interface Displayed4DControlRow {
 type ScreenMode = 'cube' | 'hypercube';
 type HypercubeAction = { type: 'state' } | { type: 'view'; previousViewMatrix: Mat3 };
 type HypercubeRotationMode = '4d' | '3d' | null;
+const DEFAULT_CUBE_SLICE_MASK = 1;
 const DEFAULT_HYPERCUBE_ROTATION_MODE: Exclude<HypercubeRotationMode, null> = '3d';
 
 export default function Index() {
@@ -92,6 +95,8 @@ export default function Index() {
   const [cubeCanUndo, setCubeCanUndo] = useState(false);
   const [scrambleText, setScrambleText] = useState('');
   const [cubeCanvasSize, setCubeCanvasSize] = useState({ width: 0, height: 0 });
+  const [cubeRotationMode, setCubeRotationMode] = useState(false);
+  const [cubeSliceMask, setCubeSliceMask] = useState(DEFAULT_CUBE_SLICE_MASK);
   const [selected4DFace, setSelected4DFace] = useState<number | null>(null);
   const [hypercubeRotationMode, setHypercubeRotationMode] = useState<HypercubeRotationMode>(DEFAULT_HYPERCUBE_ROTATION_MODE);
   const [magicCube4DSettingsOpen, setMagicCube4DSettingsOpen] = useState(false);
@@ -99,6 +104,7 @@ export default function Index() {
   const [saved4DViewMatrix, setSaved4DViewMatrix] = useState<Mat3 | null>(null);
   const [show4DViewReset, setShow4DViewReset] = useState(false);
   const cubeHistoryRef = useRef<CubeState[]>([]);
+  const lastCubeSliceMaskRef = useRef(DEFAULT_CUBE_SLICE_MASK);
   const current4DViewMatrixRef = useRef<Mat3 | null>(null);
   const hypercubeViewportRef = useRef<HypercubeViewportHandle | null>(null);
   const hypercubeHistoryRef = useRef<HypercubeAction[]>([]);
@@ -170,6 +176,29 @@ export default function Index() {
     onTwist: twist,
     disabled: cubeDisabled,
   });
+  const cubeHasSliceControls = cubeSize >= 3;
+  const handleCubeRotationModePress = useCallback(() => {
+    if (cubeHasSliceControls) {
+      setCubeRotationMode(true);
+      return;
+    }
+    setCubeRotationMode(current => !current);
+  }, [cubeHasSliceControls]);
+  const handleCubeSliceButtonPress = useCallback((bit: number) => {
+    if (!cubeHasSliceControls) {
+      return;
+    }
+    setCubeRotationMode(false);
+    setCubeSliceMask(mask => {
+      const sourceMask = clampCubeSliceMask(mask === 0 ? lastCubeSliceMaskRef.current : mask, cubeSize);
+      const allowedBits = getCubeSliceBitMask(cubeSize);
+      const nextMask = (sourceMask ^ bit) & allowedBits;
+      const resolvedMask = nextMask === 0 ? bit : nextMask;
+      const clampedMask = clampCubeSliceMask(resolvedMask, cubeSize);
+      lastCubeSliceMaskRef.current = clampedMask;
+      return clampedMask;
+    });
+  }, [cubeHasSliceControls, cubeSize]);
   const activateDefaultRotationMode = useCallback(() => {
     setHypercubeRotationMode(DEFAULT_HYPERCUBE_ROTATION_MODE);
     setSelected4DFace(null);
@@ -245,6 +274,9 @@ export default function Index() {
     cubeHistoryRef.current = [];
     setCubeCanUndo(false);
     setScrambleText('');
+    setCubeRotationMode(false);
+    setCubeSliceMask(DEFAULT_CUBE_SLICE_MASK);
+    lastCubeSliceMaskRef.current = DEFAULT_CUBE_SLICE_MASK;
   };
 
   const handleHypercubeMode = () => {
@@ -279,6 +311,9 @@ export default function Index() {
       cubeHistoryRef.current = [];
       setCubeCanUndo(false);
       setScrambleText('');
+      setCubeRotationMode(false);
+      setCubeSliceMask(DEFAULT_CUBE_SLICE_MASK);
+      lastCubeSliceMaskRef.current = DEFAULT_CUBE_SLICE_MASK;
       return;
     }
 
@@ -307,6 +342,9 @@ export default function Index() {
     setCubeCanUndo(false);
     setCubeState(applyMoves(createSolvedCube(cubeSize), scramble.moves));
     setScrambleText(scramble.notation);
+    setCubeRotationMode(false);
+    setCubeSliceMask(DEFAULT_CUBE_SLICE_MASK);
+    lastCubeSliceMaskRef.current = DEFAULT_CUBE_SLICE_MASK;
   };
 
   const handleUndo = () => {
@@ -337,6 +375,13 @@ export default function Index() {
     setHypercubeCanUndo(hypercubeHistoryRef.current.length > 0);
   };
 
+  const handle3DRotationControlPress = useCallback((axisIndex: 0 | 1 | 2, dir: -1 | 1) => {
+    cubeGesture.rotateView(axisIndex, dir);
+  }, [cubeGesture]);
+  const handle3DNotationMove = useCallback((face: Face, clockwise: boolean, turns: 1 | 2 = 1) => {
+    const layers = getCubeSelectedLayers(face, cubeSize, cubeSliceMask);
+    twist(face, clockwise, layers, turns);
+  }, [cubeSize, cubeSliceMask, twist]);
   const handle4DControlPress = useCallback((
     action: Displayed4DControlAction,
   ) => {
@@ -349,10 +394,11 @@ export default function Index() {
       return;
     }
 
+    const nextDir = (-action.dir) as -1 | 1;
     if (hypercubeRotationMode === '4d') {
-      rotateState(action.axisIndex, -action.dir);
+      rotateState(action.axisIndex, nextDir);
     } else {
-      rotateSpatialState(action.axisIndex, -action.dir);
+      rotateSpatialState(action.axisIndex, nextDir);
     }
   }, [hypercubeRotationMode, rotateSpatialState, rotateState, twistGrip]);
   const handleSliceButtonPress = useCallback((bit: number) => {
@@ -444,7 +490,10 @@ export default function Index() {
               minimumFontScale={0.7}
             >
               {mode === 'cube'
-                ? scrambleText
+                ? (
+                  scrambleText
+                  || `3D Cube  •  ${cubeRotationMode ? 'cube rotation' : `notation turns • slices ${formatCubeSliceMask(cubeSliceMask, cubeSize)}`}`
+                )
                 : `Magic Cube 4D  •  tap CCW  •  hold CW  •  dbl tap center  •  slices ${sliceMask === 0 ? 'off' : MAGICCUBE4D_SLICE_LABELS[sliceMask]}`}
             </Text>
             <View style={styles.actionGroup}>
@@ -513,6 +562,18 @@ export default function Index() {
               />
             )}
           </View>
+          {mode === 'cube' && (
+            <CubeNotationPanel
+              cubeSize={cubeSize}
+              disabled={!!twistAnim}
+              cubeRotationMode={cubeRotationMode}
+              sliceMask={cubeSliceMask}
+              onCubeRotationPress={handleCubeRotationModePress}
+              onCubeSlicePress={handleCubeSliceButtonPress}
+              onViewRotate={handle3DRotationControlPress}
+              onNotationMove={handle3DNotationMove}
+            />
+          )}
           {mode === 'hypercube' && (
             <View style={styles.hypercubeControls}>
               <View style={styles.sliceBar}>
@@ -716,6 +777,68 @@ function getButtonTextColor(backgroundColor: string): string {
   const b = parseInt(normalized.slice(4, 6), 16);
   const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
   return luminance > 0.62 ? '#111111' : '#f5f7ff';
+}
+
+function clampCubeSliceMask(mask: number, cubeSize: CubeSize): number {
+  const allowedBits = getCubeSliceBitMask(cubeSize);
+  if (allowedBits === 0) {
+    return 0;
+  }
+  const normalized = mask & allowedBits;
+  return normalized === 0 ? 0b001 : normalized;
+}
+
+function getCubeSelectedLayers(face: Face, cubeSize: CubeSize, sliceMask: number): number[] {
+  if (cubeSize === 2) {
+    return faceLayers(face, cubeSize, false);
+  }
+
+  const clampedMask = clampCubeSliceMask(sliceMask, cubeSize);
+  const outer = (cubeSize - 1) / 2;
+  const direction = faceSign(face);
+  const layers: number[] = [];
+  const availableBits = getAvailableCubeSliceBits(cubeSize);
+
+  availableBits.forEach((bit, index) => {
+    if ((clampedMask & bit) !== 0) {
+      layers.push(direction * (outer - index));
+    }
+  });
+
+  if (layers.length === 0) {
+    layers.push(direction * outer);
+  }
+
+  return layers;
+}
+
+function getCubeSliceBitMask(cubeSize: CubeSize): number {
+  return getAvailableCubeSliceBits(cubeSize).reduce((mask, bit) => mask | bit, 0);
+}
+
+function getAvailableCubeSliceBits(cubeSize: CubeSize): number[] {
+  if (cubeSize === 5) {
+    return [0b001, 0b010, 0b100];
+  }
+  if (cubeSize === 4) {
+    return [0b001, 0b010];
+  }
+  if (cubeSize === 3) {
+    return [0b001];
+  }
+  return [];
+}
+
+function formatCubeSliceMask(sliceMask: number, cubeSize: CubeSize): string {
+  if (cubeSize < 3) {
+    return 'outer';
+  }
+
+  const active = getAvailableCubeSliceBits(cubeSize)
+    .filter(bit => (clampCubeSliceMask(sliceMask, cubeSize) & bit) !== 0)
+    .map(bit => Math.log2(bit) + 1);
+
+  return active.join('+');
 }
 
 function buildDisplayed4DControlRows(

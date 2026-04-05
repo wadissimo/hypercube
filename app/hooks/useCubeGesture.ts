@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useReducer } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import type { Mat3 } from '../utils/math3d';
-import { mulMat, rotX, rotY } from '../utils/math3d';
+import { cloneMat3, mulMat, rotX, rotY, rotZ } from '../utils/math3d';
 import type { CubeSize, CubeState, Face } from '../utils/cubeModel';
 import { buildSwipeLayers } from '../utils/cubeModel';
 import { hitTestSticker, swipeToMove, tapToMove } from '../utils/cubeInteraction';
@@ -162,9 +162,26 @@ export function useCubeGesture(params: Params) {
 
   const gesture = Gesture.Simultaneous(panGesture, pinchGesture);
 
+  const commitViewMatrix = useCallback((nextViewMatrix: Mat3) => {
+    viewMatrix.current = cloneMat3(nextViewMatrix);
+    scheduleRender();
+  }, [scheduleRender]);
+
+  const rotateView = useCallback((axisIndex: 0 | 1 | 2, dir: -1 | 1) => {
+    const angle = dir * (Math.PI / 2);
+    const delta = axisIndex === 0
+      ? rotX(angle)
+      : axisIndex === 1
+        ? rotY(angle)
+        : rotZ(angle);
+    commitViewMatrix(mulMat(delta, viewMatrix.current));
+  }, [commitViewMatrix]);
+
   return {
     viewMatrix: viewMatrix.current,
     zoom: zoom.current,
     gesture,
+    rotateView,
+    setViewMatrix: commitViewMatrix,
   };
 }

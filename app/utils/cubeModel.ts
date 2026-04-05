@@ -169,8 +169,8 @@ export function twistRotationMatrix(face: Face, angle: number): Mat3 {
   switch (face) {
     case 'U': return rotY(-angle);
     case 'D': return rotY(angle);
-    case 'R': return rotX(angle);
-    case 'L': return rotX(-angle);
+    case 'R': return rotX(-angle);
+    case 'L': return rotX(angle);
     case 'F': return rotZ(-angle);
     case 'B': return rotZ(angle);
   }

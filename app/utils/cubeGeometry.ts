@@ -5,12 +5,11 @@ export const STICKER_GAP = 0.07;
 export const CAMERA_FOV = 400;
 
 export function viewDist(size: CubeSize): number {
-  if (size === 2) return 8;
   return size * 2;
 }
 
-export function cubieHalfExtent(size: CubeSize): number {
-  return size === 2 ? 1.0 : 0.5;
+export function cubieHalfExtent(_size: CubeSize): number {
+  return 0.5;
 }
 
 export function stickerQuad(cx: number, cy: number, cz: number, face: Face, size: CubeSize): Vec3[] {
