@@ -2,106 +2,76 @@ import React, { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { CubeSize, Face } from '../utils/cubeModel';
 import { FACE_COLORS } from '../utils/cubeModel';
+import { getFaceMoveButtons } from '../utils/cubeNotation';
 
 const LEFT_FACE_ROWS: Face[] = ['U', 'L', 'B'];
 const RIGHT_FACE_ROWS: Face[] = ['R', 'F', 'D'];
-const ROTATION_ROWS = [
-  { label: 'X', axisIndex: 0 as const },
-  { label: 'Y', axisIndex: 1 as const },
-  { label: 'Z', axisIndex: 2 as const },
-] as const;
 
 interface Props {
   cubeSize: CubeSize;
   disabled: boolean;
-  cubeRotationMode: boolean;
   sliceMask: number;
-  onCubeRotationPress: () => void;
+  useFaceColors: boolean;
+  faceColors?: Partial<Record<Face, string>>;
   onCubeSlicePress: (bit: number) => void;
-  onViewRotate: (axisIndex: 0 | 1 | 2, dir: -1 | 1) => void;
   onNotationMove: (face: Face, clockwise: boolean, turns?: 1 | 2) => void;
 }
 
 export default function CubeNotationPanel({
   cubeSize,
   disabled,
-  cubeRotationMode,
   sliceMask,
-  onCubeRotationPress,
+  useFaceColors,
+  faceColors,
   onCubeSlicePress,
-  onViewRotate,
   onNotationMove,
 }: Props) {
-  const availableSliceBits = useMemo(() => getAvailableCubeSliceBits(cubeSize), [cubeSize]);
-  const hasSliceControls = availableSliceBits.length > 0;
+  const availableSliceEntries = useMemo(() => getAvailableCubeSliceEntries(cubeSize), [cubeSize]);
 
   return (
     <View style={styles.container}>
       <View style={styles.modeBar}>
-        {availableSliceBits.map(bit => {
-          const active = !cubeRotationMode && (sliceMask & bit) !== 0;
+        <Text style={styles.modeLabel}>Slices:</Text>
+        {availableSliceEntries.map(entry => {
+          const active = entry.bit === ALL_SLICES_BIT
+            ? sliceMask === ALL_SLICES_BIT
+            : sliceMask !== ALL_SLICES_BIT && (sliceMask & entry.bit) !== 0;
           return (
             <Pressable
-              key={`slice-${bit}`}
+              key={`slice-${entry.bit}`}
               style={({ pressed }) => [
                 styles.modeChip,
                 active && styles.modeChipActive,
                 pressed && !disabled && styles.modeChipPressed,
               ]}
-              onPress={() => onCubeSlicePress(bit)}
+              onPress={() => onCubeSlicePress(entry.bit)}
               disabled={disabled}
             >
               <Text style={[styles.modeChipText, active && styles.modeChipTextActive]}>
-                Slice {bit}
+                {entry.label}
               </Text>
             </Pressable>
           );
         })}
-        <Pressable
-          style={({ pressed }) => [
-            styles.modeChip,
-            cubeRotationMode && styles.modeChipActive,
-            pressed && !disabled && styles.modeChipPressed,
-          ]}
-          onPress={onCubeRotationPress}
-          disabled={disabled}
-        >
-          <Text style={[styles.modeChipText, cubeRotationMode && styles.modeChipTextActive]}>
-            Cube Rot
-          </Text>
-        </Pressable>
-        {!hasSliceControls && <View style={styles.modeSpacer} />}
       </View>
-
-      {cubeRotationMode ? (
-        <View style={styles.rotationPanel}>
-          <RotationColumn
-            rows={ROTATION_ROWS.slice(0, 2)}
-            disabled={disabled}
-            onViewRotate={onViewRotate}
-          />
-          <RotationColumn
-            rows={ROTATION_ROWS.slice(2)}
-            disabled={disabled}
-            onViewRotate={onViewRotate}
-          />
-        </View>
-      ) : (
-        <View style={styles.notationSplit}>
-          <FaceColumn
-            faces={LEFT_FACE_ROWS}
-            disabled={disabled}
-            onNotationMove={onNotationMove}
-            reverseOrder={false}
-          />
-          <FaceColumn
-            faces={RIGHT_FACE_ROWS}
-            disabled={disabled}
-            onNotationMove={onNotationMove}
-            reverseOrder
-          />
-        </View>
-      )}
+      <View style={styles.notationSplit}>
+        <FaceColumn
+          faces={LEFT_FACE_ROWS}
+          disabled={disabled}
+          useFaceColors={useFaceColors}
+          faceColors={faceColors}
+          onNotationMove={onNotationMove}
+          reverseOrder={false}
+        />
+        <FaceColumn
+          faces={RIGHT_FACE_ROWS}
+          disabled={disabled}
+          useFaceColors={useFaceColors}
+          faceColors={faceColors}
+          onNotationMove={onNotationMove}
+          reverseOrder
+        />
+      </View>
     </View>
   );
 }
@@ -109,30 +79,24 @@ export default function CubeNotationPanel({
 interface FaceColumnProps {
   faces: readonly Face[];
   disabled: boolean;
+  useFaceColors: boolean;
+  faceColors?: Partial<Record<Face, string>>;
   onNotationMove: (face: Face, clockwise: boolean, turns?: 1 | 2) => void;
   reverseOrder: boolean;
 }
 
-function FaceColumn({ faces, disabled, onNotationMove, reverseOrder }: FaceColumnProps) {
+function FaceColumn({ faces, disabled, useFaceColors, faceColors, onNotationMove, reverseOrder }: FaceColumnProps) {
   return (
     <View style={styles.faceColumn}>
       {faces.map(face => (
         <View key={face} style={styles.faceRow}>
-          {(reverseOrder
-            ? [
-              { label: `${face}2`, clockwise: true, turns: 2 as const },
-              { label: `${face}'`, clockwise: false, turns: 1 as const },
-              { label: face, clockwise: true, turns: 1 as const },
-            ]
-            : [
-              { label: face, clockwise: true, turns: 1 as const },
-              { label: `${face}'`, clockwise: false, turns: 1 as const },
-              { label: `${face}2`, clockwise: true, turns: 2 as const },
-            ]).map(button => (
+          {getFaceMoveButtons(face, reverseOrder).map(button => (
             <FaceMoveButton
               key={button.label}
               label={button.label}
               face={face}
+              useFaceColors={useFaceColors}
+              faceColor={faceColors?.[face]}
               disabled={disabled}
               onPress={() => onNotationMove(face, button.clockwise, button.turns)}
             />
@@ -143,56 +107,25 @@ function FaceColumn({ faces, disabled, onNotationMove, reverseOrder }: FaceColum
   );
 }
 
-interface RotationColumnProps {
-  rows: readonly { label: string; axisIndex: 0 | 1 | 2 }[];
-  disabled: boolean;
-  onViewRotate: (axisIndex: 0 | 1 | 2, dir: -1 | 1) => void;
-}
-
-function RotationColumn({ rows, disabled, onViewRotate }: RotationColumnProps) {
-  return (
-    <View style={styles.faceColumn}>
-      {rows.map(row => (
-        <View key={row.label} style={styles.faceRow}>
-          <CompactButton
-            label={`${row.label}2`}
-            disabled={disabled}
-            onPress={() => {
-              onViewRotate(row.axisIndex, 1);
-              onViewRotate(row.axisIndex, 1);
-            }}
-          />
-          <CompactButton
-            label={`${row.label}'`}
-            disabled={disabled}
-            onPress={() => onViewRotate(row.axisIndex, -1)}
-          />
-          <CompactButton
-            label={row.label}
-            disabled={disabled}
-            onPress={() => onViewRotate(row.axisIndex, 1)}
-          />
-        </View>
-      ))}
-    </View>
-  );
-}
-
 interface FaceMoveButtonProps {
   label: string;
   face: Face;
+  useFaceColors: boolean;
+  faceColor?: string;
   disabled: boolean;
   onPress: () => void;
 }
 
-function FaceMoveButton({ label, face, disabled, onPress }: FaceMoveButtonProps) {
-  const backgroundColor = FACE_COLORS[face];
-  const textColor = getButtonTextColor(backgroundColor);
+function FaceMoveButton({ label, face, useFaceColors, faceColor, disabled, onPress }: FaceMoveButtonProps) {
+  const backgroundColor = faceColor ?? FACE_COLORS[face];
+  const resolvedBackgroundColor = useFaceColors ? backgroundColor : 'rgba(255,255,255,0.1)';
+  const resolvedBorderColor = useFaceColors ? backgroundColor : 'rgba(255,255,255,0.14)';
+  const textColor = useFaceColors ? getButtonTextColor(backgroundColor) : '#f5f7ff';
   return (
     <Pressable
       style={({ pressed }) => [
         styles.faceMoveButton,
-        { backgroundColor, borderColor: backgroundColor },
+        { backgroundColor: resolvedBackgroundColor, borderColor: resolvedBorderColor },
         disabled && styles.disabled,
         pressed && !disabled && styles.faceMoveButtonPressed,
       ]}
@@ -204,39 +137,18 @@ function FaceMoveButton({ label, face, disabled, onPress }: FaceMoveButtonProps)
   );
 }
 
-interface CompactButtonProps {
-  label: string;
-  disabled: boolean;
-  onPress: () => void;
-}
+const ALL_SLICES_BIT = -1;
 
-function CompactButton({ label, disabled, onPress }: CompactButtonProps) {
-  return (
-    <Pressable
-      style={({ pressed }) => [
-        styles.compactButton,
-        disabled && styles.disabled,
-        pressed && !disabled && styles.compactButtonPressed,
-      ]}
-      onPress={onPress}
-      disabled={disabled}
-    >
-      <Text style={styles.compactButtonText}>{label}</Text>
-    </Pressable>
-  );
-}
-
-function getAvailableCubeSliceBits(cubeSize: CubeSize): number[] {
-  if (cubeSize === 5) {
-    return [1, 2, 4];
-  }
-  if (cubeSize === 4) {
-    return [1, 2];
-  }
-  if (cubeSize === 3) {
-    return [1];
-  }
-  return [];
+function getAvailableCubeSliceEntries(cubeSize: CubeSize): { bit: number; label: string }[] {
+  const numbered = cubeSize === 5
+    ? [1, 2, 3]
+    : cubeSize === 4
+      ? [1, 2]
+      : [1];
+  return [
+    ...numbered.map(value => ({ bit: 1 << (value - 1), label: `${value}` })),
+    { bit: ALL_SLICES_BIT, label: 'All' },
+  ];
 }
 
 function getButtonTextColor(backgroundColor: string): string {
@@ -261,6 +173,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     gap: 8,
   },
+  modeLabel: {
+    color: 'rgba(255,255,255,0.65)',
+    fontSize: 12,
+    fontWeight: '700',
+  },
   modeChip: {
     borderRadius: 999,
     paddingHorizontal: 14,
@@ -283,14 +200,6 @@ const styles = StyleSheet.create({
   },
   modeChipTextActive: {
     color: '#f5f7ff',
-  },
-  modeSpacer: {
-    flex: 1,
-  },
-  rotationPanel: {
-    flexDirection: 'row',
-    paddingHorizontal: 12,
-    gap: 10,
   },
   notationSplit: {
     flexDirection: 'row',
@@ -318,27 +227,6 @@ const styles = StyleSheet.create({
     transform: [{ scale: 0.98 }],
   },
   faceMoveButtonText: {
-    fontSize: 13,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-  },
-  compactButton: {
-    flex: 1,
-    minWidth: 0,
-    height: 36,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.14)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  compactButtonPressed: {
-    transform: [{ scale: 0.98 }],
-    backgroundColor: 'rgba(255,255,255,0.18)',
-  },
-  compactButtonText: {
-    color: '#f5f7ff',
     fontSize: 13,
     fontWeight: '800',
     textTransform: 'uppercase',

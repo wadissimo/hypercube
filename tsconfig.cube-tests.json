@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "node16",
+    "moduleResolution": "node16",
+    "target": "es2022",
+    "outDir": "./dist/cube-tests",
+    "rootDir": ".",
+    "noEmit": false,
+    "types": ["node"],
+    "skipLibCheck": true
+  },
+  "include": [
+    "app/utils/cubeModel.ts",
+    "app/utils/cubeControls.ts",
+    "app/utils/cubeNotation.ts",
+    "app/utils/math3d.ts",
+    "app/utils/cubeGeometry.ts",
+    "app/utils/puzzleTopology.ts",
+    "tests/cube/cubeModel.test.ts",
+    "tests/cube/cubeControls.test.ts",
+    "tests/cube/cubeNotation.test.ts"
+  ]
+}

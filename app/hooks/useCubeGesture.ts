@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useReducer } from 'react';
+import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import type { Mat3 } from '../utils/math3d';
 import { cloneMat3, mulMat, rotX, rotY, rotZ } from '../utils/math3d';
 import type { CubeSize, CubeState, Face } from '../utils/cubeModel';
-import { buildSwipeLayers } from '../utils/cubeModel';
+import { buildSwipeLayers, twistRotationMatrix } from '../utils/cubeModel';
 import { hitTestSticker, swipeToMove, tapToMove } from '../utils/cubeInteraction';
 import type { StickerHit } from '../utils/cubeInteraction';
 
@@ -33,6 +33,7 @@ interface Params {
   height: number;
   onTwist: (face: Face, clockwise: boolean, layers: number[]) => void;
   disabled: boolean;
+  rotationOnly?: boolean;
   initialViewMatrix?: Mat3;
   initialZoom?: number;
   onViewStateChange?: (next: { viewMatrix: Mat3; zoom: number }) => void;
@@ -69,6 +70,13 @@ export function useCubeGesture(params: Params) {
     }
   ), []);
 
+  const emitViewStateChange = useCallback(() => {
+    onViewStateChange?.({
+      viewMatrix: cloneMat3(viewMatrix.current),
+      zoom: zoom.current,
+    });
+  }, [onViewStateChange]);
+
   const scheduleRender = useCallback(() => {
     if (renderFrameRef.current !== null) {
       return;
@@ -76,13 +84,9 @@ export function useCubeGesture(params: Params) {
 
     renderFrameRef.current = requestAnimationFrame(() => {
       renderFrameRef.current = null;
-      onViewStateChange?.({
-        viewMatrix: cloneMat3(viewMatrix.current),
-        zoom: zoom.current,
-      });
       forceRender();
     });
-  }, [onViewStateChange]);
+  }, []);
 
   useEffect(() => {
     const nextViewMatrix = initialViewMatrix ?? createDefaultCubeViewMatrix();
@@ -105,6 +109,11 @@ export function useCubeGesture(params: Params) {
       touchPointRef.current = [e.x, e.y];
 
       if (p.current.disabled) {
+        hitRef.current = null;
+        return;
+      }
+
+      if (p.current.rotationOnly) {
         hitRef.current = null;
         return;
       }
@@ -154,8 +163,14 @@ export function useCubeGesture(params: Params) {
       }
     })
     .onFinalize((e) => {
-      if (!hitRef.current || moveExecutedRef.current || p.current.disabled) {
+      if (p.current.disabled) {
         hitRef.current = null;
+        return;
+      }
+
+      if (!hitRef.current || moveExecutedRef.current || p.current.rotationOnly) {
+        hitRef.current = null;
+        emitViewStateChange();
         return;
       }
 
@@ -177,6 +192,7 @@ export function useCubeGesture(params: Params) {
       }
 
       hitRef.current = null;
+      emitViewStateChange();
     });
 
   const pinchGesture = Gesture.Pinch()
@@ -187,6 +203,9 @@ export function useCubeGesture(params: Params) {
     .onUpdate((e) => {
       zoom.current = clamp(pinchStartZoom.current * e.scale, MIN_ZOOM, MAX_ZOOM);
       scheduleRender();
+    })
+    .onFinalize(() => {
+      emitViewStateChange();
     });
 
   const gesture = Gesture.Simultaneous(panGesture, pinchGesture);
@@ -194,7 +213,8 @@ export function useCubeGesture(params: Params) {
   const commitViewMatrix = useCallback((nextViewMatrix: Mat3) => {
     viewMatrix.current = cloneMat3(nextViewMatrix);
     scheduleRender();
-  }, [scheduleRender]);
+    emitViewStateChange();
+  }, [emitViewStateChange, scheduleRender]);
 
   const rotateView = useCallback((axisIndex: 0 | 1 | 2, dir: -1 | 1) => {
     const angle = dir * (Math.PI / 2);
@@ -206,10 +226,19 @@ export function useCubeGesture(params: Params) {
     commitViewMatrix(mulMat(delta, viewMatrix.current));
   }, [commitViewMatrix]);
 
+  const rotateCube = useCallback((face: Face, clockwise: boolean, turns: 1 | 2 = 1) => {
+    const angle = (clockwise ? 1 : -1) * turns * (Math.PI / 2);
+    const delta = twistRotationMatrix(face, angle);
+
+    // Whole-cube turns must use the same object-space composition as sticker twists.
+    commitViewMatrix(mulMat(viewMatrix.current, delta));
+  }, [commitViewMatrix]);
+
   return {
     viewMatrix: viewMatrix.current,
     zoom: zoom.current,
     gesture,
+    rotateCube,
     rotateView,
     setViewMatrix: commitViewMatrix,
   };
