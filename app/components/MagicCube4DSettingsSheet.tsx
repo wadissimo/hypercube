@@ -7,7 +7,7 @@ import {
   BottomSheetScrollView,
   type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
-import type { MagicCube4DSettings } from '../utils/magiccube4dSettings';
+import type { HypercubeGestureAction, MagicCube4DSettings } from '../utils/magiccube4dSettings';
 
 interface Props {
   visible: boolean;
@@ -17,15 +17,24 @@ interface Props {
   onReset: () => void;
 }
 
-type SettingKey = keyof MagicCube4DSettings;
+type NumericSettingKey = {
+  [K in keyof MagicCube4DSettings]: MagicCube4DSettings[K] extends number ? K : never;
+}[keyof MagicCube4DSettings];
+
+type GestureSettingKey = 'singleTapAction' | 'longTapAction' | 'doubleTapAction';
 
 interface SettingSpec {
-  key: SettingKey;
+  key: NumericSettingKey;
   label: string;
   step: number;
   min: number;
   max: number;
   format: (value: number) => string;
+}
+
+interface GestureSettingSpec {
+  key: GestureSettingKey;
+  label: string;
 }
 
 const SECTIONS: { title: string; items: SettingSpec[] }[] = [
@@ -141,6 +150,20 @@ const SECTIONS: { title: string; items: SettingSpec[] }[] = [
   },
 ];
 
+const GESTURE_SETTINGS: GestureSettingSpec[] = [
+  { key: 'singleTapAction', label: 'Single tap' },
+  { key: 'longTapAction', label: 'Long tap' },
+  { key: 'doubleTapAction', label: 'Double tap' },
+];
+
+const GESTURE_ACTION_OPTIONS: { value: HypercubeGestureAction; label: string }[] = [
+  { value: 'turnCounterclockwise', label: 'Turn CCW' },
+  { value: 'turnClockwise', label: 'Turn CW' },
+  { value: 'centerFace', label: 'Center face' },
+  { value: 'selectFace', label: 'Select face' },
+  { value: 'none', label: 'None' },
+];
+
 export default function MagicCube4DSettingsSheet({
   visible,
   settings,
@@ -163,6 +186,13 @@ export default function MagicCube4DSettingsSheet({
     onChange({
       ...settings,
       [spec.key]: nextValue,
+    });
+  };
+
+  const updateGestureSetting = (key: GestureSettingKey, value: HypercubeGestureAction) => {
+    onChange({
+      ...settings,
+      [key]: value,
     });
   };
 
@@ -226,9 +256,49 @@ export default function MagicCube4DSettingsSheet({
             ))}
           </View>
         ))}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Gesture Actions</Text>
+          {GESTURE_SETTINGS.map(spec => (
+            <View key={spec.key} style={styles.gestureSection}>
+              <View style={styles.settingMeta}>
+                <Text style={styles.settingLabel}>{spec.label}</Text>
+                <Text style={styles.settingValue}>{getGestureActionLabel(settings[spec.key])}</Text>
+              </View>
+              <View style={styles.gestureOptionGrid}>
+                {GESTURE_ACTION_OPTIONS.map(option => {
+                  const active = settings[spec.key] === option.value;
+                  return (
+                    <Pressable
+                      key={`${spec.key}-${option.value}`}
+                      style={[
+                        styles.gestureOptionButton,
+                        active && styles.gestureOptionButtonActive,
+                      ]}
+                      onPress={() => updateGestureSetting(spec.key, option.value)}
+                    >
+                      <Text
+                        style={[
+                          styles.gestureOptionButtonText,
+                          active && styles.gestureOptionButtonTextActive,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          ))}
+        </View>
       </BottomSheetScrollView>
     </BottomSheetModal>
   );
+}
+
+function getGestureActionLabel(value: HypercubeGestureAction): string {
+  const option = GESTURE_ACTION_OPTIONS.find(candidate => candidate.value === value);
+  return option?.label ?? value;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -283,6 +353,9 @@ const styles = StyleSheet.create({
   section: {
     gap: 10,
   },
+  gestureSection: {
+    gap: 12,
+  },
   sectionTitle: {
     color: 'rgba(255,255,255,0.65)',
     fontSize: 12,
@@ -320,6 +393,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
+  gestureOptionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
   stepperButton: {
     width: 38,
     height: 38,
@@ -327,5 +405,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 10,
     backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  gestureOptionButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  gestureOptionButtonActive: {
+    borderColor: '#f5f7ff',
+    backgroundColor: 'rgba(245,247,255,0.16)',
+  },
+  gestureOptionButtonText: {
+    color: 'rgba(245,247,255,0.82)',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  gestureOptionButtonTextActive: {
+    color: '#f5f7ff',
   },
 });

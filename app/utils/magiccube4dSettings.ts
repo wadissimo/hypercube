@@ -1,3 +1,10 @@
+export type HypercubeGestureAction =
+  | 'turnCounterclockwise'
+  | 'turnClockwise'
+  | 'centerFace'
+  | 'selectFace'
+  | 'none';
+
 export interface MagicCube4DSettings {
   dragSensitivity: number;
   twistDurationMs: number;
@@ -9,6 +16,9 @@ export interface MagicCube4DSettings {
   faceSpacing: number;
   stickerSpacing: number;
   shadowLight: number;
+  singleTapAction: HypercubeGestureAction;
+  longTapAction: HypercubeGestureAction;
+  doubleTapAction: HypercubeGestureAction;
 }
 
 export const DEFAULT_MAGICCUBE4D_SETTINGS: MagicCube4DSettings = {
@@ -22,9 +32,13 @@ export const DEFAULT_MAGICCUBE4D_SETTINGS: MagicCube4DSettings = {
   faceSpacing: 1,
   stickerSpacing: 1,
   shadowLight: 0.32,
+  singleTapAction: 'turnCounterclockwise',
+  longTapAction: 'turnClockwise',
+  doubleTapAction: 'centerFace',
 };
 
 export function clampMagicCube4DSettings(settings: MagicCube4DSettings): MagicCube4DSettings {
+  const defaults = DEFAULT_MAGICCUBE4D_SETTINGS;
   return {
     dragSensitivity: clamp(settings.dragSensitivity, 0.4, 1.8),
     twistDurationMs: clamp(settings.twistDurationMs, 120, 600),
@@ -36,7 +50,18 @@ export function clampMagicCube4DSettings(settings: MagicCube4DSettings): MagicCu
     faceSpacing: clamp(settings.faceSpacing, 0.7, 1.6),
     stickerSpacing: clamp(settings.stickerSpacing, 0.7, 1.6),
     shadowLight: clamp(settings.shadowLight, 0, 0.65),
+    singleTapAction: isHypercubeGestureAction(settings.singleTapAction) ? settings.singleTapAction : defaults.singleTapAction,
+    longTapAction: isHypercubeGestureAction(settings.longTapAction) ? settings.longTapAction : defaults.longTapAction,
+    doubleTapAction: isHypercubeGestureAction(settings.doubleTapAction) ? settings.doubleTapAction : defaults.doubleTapAction,
   };
+}
+
+export function isHypercubeGestureAction(value: unknown): value is HypercubeGestureAction {
+  return value === 'turnCounterclockwise'
+    || value === 'turnClockwise'
+    || value === 'centerFace'
+    || value === 'selectFace'
+    || value === 'none';
 }
 
 function clamp(value: number, min: number, max: number): number {

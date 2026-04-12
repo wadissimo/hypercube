@@ -51,6 +51,7 @@ import {
 import {
   clampMagicCube4DSettings,
   DEFAULT_MAGICCUBE4D_SETTINGS,
+  type HypercubeGestureAction,
 } from './utils/magiccube4dSettings';
 import { MAGICCUBE4D_HYPERCUBE_DATA } from './utils/magiccube4dData';
 import { cloneMat3, mulVec, type Mat3 } from './utils/math3d';
@@ -685,28 +686,48 @@ export default function Index() {
     }
     setSelected4DFace(faceIndex);
   }, [activateDefaultRotationMode, hypercubeRotationMode, selected4DFace, setSliceMask]);
+  const performHypercubeGestureAction = useCallback((
+    action: HypercubeGestureAction,
+    point: [number, number],
+  ) => {
+    if (action === 'none') {
+      return;
+    }
 
-  const handleHypercubeDoubleTap = useCallback((point: [number, number]) => {
     const pickInfo = magicCube4DPickRef.current(point[0], point[1]);
-    if (pickInfo) {
-      select4DFace(0);
+    if (!pickInfo) {
+      return;
     }
-    rotateFaceToCenter(pickInfo?.faceIndex ?? null);
-  }, [rotateFaceToCenter, select4DFace]);
+
+    switch (action) {
+      case 'turnCounterclockwise':
+        select4DFace(pickInfo.faceIndex);
+        twistGrip(pickInfo.gripIndex, 1);
+        return;
+      case 'turnClockwise':
+        select4DFace(pickInfo.faceIndex);
+        twistGrip(pickInfo.gripIndex, -1);
+        return;
+      case 'centerFace':
+        select4DFace(0);
+        rotateFaceToCenter(pickInfo.faceIndex);
+        return;
+      case 'selectFace':
+        select4DFace(pickInfo.faceIndex);
+        return;
+      case 'none':
+        return;
+    }
+  }, [rotateFaceToCenter, select4DFace, twistGrip]);
   const handleHypercubeTap = useCallback((point: [number, number]) => {
-    const pickInfo = magicCube4DPickRef.current(point[0], point[1]);
-    if (pickInfo) {
-      select4DFace(pickInfo.faceIndex);
-    }
-    twistGrip(pickInfo?.gripIndex ?? null, 1);
-  }, [select4DFace, twistGrip]);
+    performHypercubeGestureAction(magicCube4DSettings.singleTapAction, point);
+  }, [magicCube4DSettings.singleTapAction, performHypercubeGestureAction]);
   const handleHypercubeLongTap = useCallback((point: [number, number]) => {
-    const pickInfo = magicCube4DPickRef.current(point[0], point[1]);
-    if (pickInfo) {
-      select4DFace(pickInfo.faceIndex);
-    }
-    twistGrip(pickInfo?.gripIndex ?? null, -1);
-  }, [select4DFace, twistGrip]);
+    performHypercubeGestureAction(magicCube4DSettings.longTapAction, point);
+  }, [magicCube4DSettings.longTapAction, performHypercubeGestureAction]);
+  const handleHypercubeDoubleTap = useCallback((point: [number, number]) => {
+    performHypercubeGestureAction(magicCube4DSettings.doubleTapAction, point);
+  }, [magicCube4DSettings.doubleTapAction, performHypercubeGestureAction]);
   const handle4DViewMatrixChange = useCallback((nextViewMatrix: Mat3) => {
     const cloned = cloneMat3(nextViewMatrix);
     current4DViewMatrixRef.current = cloned;
@@ -978,7 +999,7 @@ export default function Index() {
       {
         key: 'controls',
         title: 'Controls',
-        body: 'Tap for counterclockwise turns, long-press for clockwise turns, and double-tap to center a face. Slice chips switch active layers, and 3D or 4D rotation modes change what the lower controls do.',
+        body: 'Drag to rotate the view. Gesture actions for single tap, long tap, and double tap are configurable in 4D settings. Slice chips switch active layers, and 3D or 4D rotation modes change what the lower controls do.',
       },
       {
         key: 'timer',

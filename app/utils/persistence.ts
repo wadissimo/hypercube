@@ -3,7 +3,12 @@ import type { CubeSize, CubeState, Face } from './cubeModel';
 import type { CubeTimerHistoryEntry, CubeTimerSession } from './cubeTimer';
 import { createDefaultCubeTimerSession } from './cubeTimer';
 import type { CubeViewSettings } from './cubeViewSettings';
-import type { MagicCube4DSettings } from './magiccube4dSettings';
+import {
+  clampMagicCube4DSettings,
+  DEFAULT_MAGICCUBE4D_SETTINGS,
+  isHypercubeGestureAction,
+  type MagicCube4DSettings,
+} from './magiccube4dSettings';
 import type { Mat3 } from './math3d';
 import type { Mat4 } from './math4d';
 
@@ -157,6 +162,7 @@ export function normalizePersistedHypercubeSession(
   const timer = session.timer ?? createDefaultCubeTimerSession();
   return {
     ...session,
+    settings: normalizeMagicCube4DSettings(session.settings),
     solveCheckArmed: session.solveCheckArmed ?? false,
     timer: timer.status === 'running'
       ? {
@@ -193,7 +199,17 @@ function isMagicCube4DSettings(value: unknown): value is MagicCube4DSettings {
     && isFiniteNumber(value.projection4d)
     && isFiniteNumber(value.faceSpacing)
     && isFiniteNumber(value.stickerSpacing)
-    && isFiniteNumber(value.shadowLight);
+    && isFiniteNumber(value.shadowLight)
+    && (value.singleTapAction === undefined || isHypercubeGestureAction(value.singleTapAction))
+    && (value.longTapAction === undefined || isHypercubeGestureAction(value.longTapAction))
+    && (value.doubleTapAction === undefined || isHypercubeGestureAction(value.doubleTapAction));
+}
+
+function normalizeMagicCube4DSettings(settings: MagicCube4DSettings): MagicCube4DSettings {
+  return clampMagicCube4DSettings({
+    ...DEFAULT_MAGICCUBE4D_SETTINGS,
+    ...settings,
+  });
 }
 
 function isCubeViewSettings(value: unknown): value is CubeViewSettings {
