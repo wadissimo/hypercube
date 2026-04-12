@@ -105,6 +105,27 @@ export function createSolvedMagicCube4DState(): number[] {
   return [...DATA.sticker2Face];
 }
 
+export function isMagicCube4DSolved(state: number[]): boolean {
+  const faceColors = new Array<number | null>(DATA.faceCenters.length).fill(null);
+
+  for (let stickerIndex = 0; stickerIndex < state.length; stickerIndex++) {
+    const faceIndex = DATA.sticker2Face[stickerIndex];
+    const color = state[stickerIndex];
+    const currentFaceColor = faceColors[faceIndex];
+
+    if (currentFaceColor === null) {
+      faceColors[faceIndex] = color;
+      continue;
+    }
+
+    if (currentFaceColor !== color) {
+      return false;
+    }
+  }
+
+  return faceColors.every(color => color !== null);
+}
+
 export function getStickerFaceIndex(stickerIndex: number): number {
   return DATA.sticker2Face[stickerIndex];
 }

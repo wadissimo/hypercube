@@ -148,6 +148,25 @@ export function createSolvedCube(size: CubeSize = 3): CubeState {
   return cubies;
 }
 
+export function isCubeSolved(state: CubeState): boolean {
+  const faceColors = {} as Partial<Record<Face, Face>>;
+
+  for (const cubie of state) {
+    for (const [face, color] of Object.entries(cubie.faces) as [Face, Face][]) {
+      if (faceColors[face] === undefined) {
+        faceColors[face] = color;
+        continue;
+      }
+
+      if (faceColors[face] !== color) {
+        return false;
+      }
+    }
+  }
+
+  return ALL_FACES.every(face => faceColors[face] !== undefined);
+}
+
 export function isInLayer(cubie: Cubie, face: Face, layers: number[]): boolean {
   const coord = faceAxisCoord(face, cubie.position);
   return layers.some(l => Math.abs(coord - l) < 0.01);

@@ -1,11 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import {
   BottomSheetBackdrop,
   BottomSheetModal,
   BottomSheetScrollView,
-  BottomSheetView,
   type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
 import type { CubeTimerSession } from '../utils/cubeTimer';
@@ -80,20 +78,15 @@ export default function CubeTimerSheet({
       backgroundStyle={styles.sheet}
       handleIndicatorStyle={styles.handleIndicator}
     >
-      <BottomSheetView style={styles.header}>
-        <View>
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.subtitle}>{subtitle}</Text>
-        </View>
-        <Pressable style={styles.closeButton} onPress={() => modalRef.current?.dismiss()}>
-          <Ionicons name="close" size={20} color="#f5f7ff" />
-        </Pressable>
-      </BottomSheetView>
       <BottomSheetScrollView
         style={styles.content}
         contentContainerStyle={styles.contentInner}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.header}>
+          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.subtitle}>{subtitle}</Text>
+        </View>
         <View style={styles.statsRow}>
           <StatCard
             label="Record"
@@ -185,14 +178,10 @@ const styles = StyleSheet.create({
     width: 42,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingTop: 16,
     paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.08)',
+    marginBottom: 2,
   },
   title: {
     color: '#f5f7ff',
@@ -203,14 +192,6 @@ const styles = StyleSheet.create({
     color: 'rgba(245,247,255,0.62)',
     fontSize: 12,
     marginTop: 2,
-  },
-  closeButton: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   content: {
     flex: 1,

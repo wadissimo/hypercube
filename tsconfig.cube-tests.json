@@ -15,10 +15,16 @@
     "app/utils/cubeControls.ts",
     "app/utils/cubeNotation.ts",
     "app/utils/math3d.ts",
+    "app/utils/math4d.ts",
     "app/utils/cubeGeometry.ts",
+    "app/utils/magiccube4d.ts",
+    "app/utils/magiccube4dData.ts",
+    "app/utils/puzzleSolved.ts",
     "app/utils/puzzleTopology.ts",
     "tests/cube/cubeModel.test.ts",
     "tests/cube/cubeControls.test.ts",
-    "tests/cube/cubeNotation.test.ts"
+    "tests/cube/cubeNotation.test.ts",
+    "tests/cube/puzzleSolved.test.ts",
+    "tests/cube/puzzleSolvedWorkflow.test.ts"
   ]
 }

@@ -1,11 +1,9 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { StyleSheet, Text, View } from 'react-native';
 import {
   BottomSheetBackdrop,
   BottomSheetModal,
   BottomSheetScrollView,
-  BottomSheetView,
   type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
 
@@ -61,17 +59,14 @@ export default function AppInfoSheet({
       backgroundStyle={styles.sheet}
       handleIndicatorStyle={styles.handleIndicator}
     >
-      <BottomSheetView style={styles.header}>
-        <Text style={styles.title}>{title}</Text>
-        <Pressable style={styles.closeButton} onPress={() => modalRef.current?.dismiss()}>
-          <Ionicons name="close" size={20} color="#f5f7ff" />
-        </Pressable>
-      </BottomSheetView>
       <BottomSheetScrollView
         style={styles.content}
         contentContainerStyle={styles.contentInner}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.header}>
+          <Text style={styles.title}>{title}</Text>
+        </View>
         {sections.map(section => (
           <View key={section.key} style={styles.section}>
             <Text style={styles.sectionTitle}>{section.title}</Text>
@@ -96,27 +91,15 @@ const styles = StyleSheet.create({
     width: 42,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 18,
-    paddingTop: 16,
     paddingBottom: 14,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255,255,255,0.08)',
+    marginBottom: 2,
   },
   title: {
     color: '#f5f7ff',
     fontSize: 18,
     fontWeight: '700',
-  },
-  closeButton: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 999,
-    backgroundColor: 'rgba(255,255,255,0.08)',
   },
   content: {
     flex: 1,

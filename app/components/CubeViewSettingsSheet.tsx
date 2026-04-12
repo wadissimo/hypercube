@@ -7,17 +7,21 @@ import {
   BottomSheetScrollView,
   type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
-import type { MagicCube4DSettings } from '../utils/magiccube4dSettings';
+import type { Face } from '../utils/cubeModel';
+import { ALL_FACES, FACE_COLORS } from '../utils/cubeModel';
+import type { CubeViewSettings } from '../utils/cubeViewSettings';
 
 interface Props {
   visible: boolean;
-  settings: MagicCube4DSettings;
-  onChange: (settings: MagicCube4DSettings) => void;
+  settings: CubeViewSettings;
+  crossFace: Face;
+  onChange: (settings: CubeViewSettings) => void;
+  onCrossFaceChange: (face: Face) => void;
   onClose: () => void;
   onReset: () => void;
 }
 
-type SettingKey = keyof MagicCube4DSettings;
+type SettingKey = keyof CubeViewSettings;
 
 interface SettingSpec {
   key: SettingKey;
@@ -28,123 +32,40 @@ interface SettingSpec {
   format: (value: number) => string;
 }
 
-const SECTIONS: { title: string; items: SettingSpec[] }[] = [
+const VIEW_SETTINGS: SettingSpec[] = [
   {
-    title: 'Interaction',
-    items: [
-      {
-        key: 'dragSensitivity',
-        label: 'Drag sensitivity',
-        step: 0.1,
-        min: 0.4,
-        max: 1.8,
-        format: value => `${value.toFixed(2)}x`,
-      },
-    ],
+    key: 'viewPitchDeg',
+    label: 'Pitch',
+    step: 2,
+    min: -85,
+    max: 85,
+    format: value => `${Math.round(value)}°`,
   },
   {
-    title: 'Animations',
-    items: [
-      {
-        key: 'twistDurationMs',
-        label: 'Twist duration',
-        step: 20,
-        min: 120,
-        max: 600,
-        format: value => `${Math.round(value)} ms`,
-      },
-      {
-        key: 'animationDurationMs',
-        label: 'Other animations',
-        step: 20,
-        min: 120,
-        max: 600,
-        format: value => `${Math.round(value)} ms`,
-      },
-    ],
+    key: 'viewYawDeg',
+    label: 'Yaw',
+    step: 3,
+    min: -180,
+    max: 180,
+    format: value => `${Math.round(value)}°`,
   },
   {
-    title: 'View',
-    items: [
-      {
-        key: 'viewPitchDeg',
-        label: 'Pitch',
-        step: 2,
-        min: -85,
-        max: 85,
-        format: value => `${Math.round(value)}°`,
-      },
-      {
-        key: 'viewYawDeg',
-        label: 'Yaw',
-        step: 3,
-        min: -180,
-        max: 180,
-        format: value => `${Math.round(value)}°`,
-      },
-    ],
-  },
-  {
-    title: 'Projection',
-    items: [
-      {
-        key: 'projectionScale',
-        label: 'Scale',
-        step: 0.05,
-        min: 0.6,
-        max: 1.8,
-        format: value => `${value.toFixed(2)}x`,
-      },
-      {
-        key: 'projection4d',
-        label: '4D FOV',
-        step: 0.05,
-        min: 0.6,
-        max: 1.6,
-        format: value => `${value.toFixed(2)}x`,
-      },
-    ],
-  },
-  {
-    title: 'Geometry',
-    items: [
-      {
-        key: 'faceSpacing',
-        label: 'Face spacing',
-        step: 0.05,
-        min: 0.7,
-        max: 1.6,
-        format: value => `${value.toFixed(2)}x`,
-      },
-      {
-        key: 'stickerSpacing',
-        label: 'Sticker spacing',
-        step: 0.05,
-        min: 0.7,
-        max: 1.6,
-        format: value => `${value.toFixed(2)}x`,
-      },
-    ],
-  },
-  {
-    title: 'Lighting',
-    items: [
-      {
-        key: 'shadowLight',
-        label: 'Shadow light',
-        step: 0.04,
-        min: 0,
-        max: 0.65,
-        format: value => `${Math.round(value * 100)}%`,
-      },
-    ],
+    key: 'viewRollDeg',
+    label: 'Roll',
+    step: 3,
+    min: -180,
+    max: 180,
+    format: value => `${Math.round(value)}°`,
   },
 ];
 
-export default function MagicCube4DSettingsSheet({
+
+export default function CubeViewSettingsSheet({
   visible,
   settings,
+  crossFace,
   onChange,
+  onCrossFaceChange,
   onClose,
   onReset,
 }: Props) {
@@ -179,7 +100,7 @@ export default function MagicCube4DSettingsSheet({
   return (
     <BottomSheetModal
       ref={modalRef}
-      snapPoints={['76%']}
+      snapPoints={['60%']}
       index={0}
       enablePanDownToClose
       enableDynamicSizing={false}
@@ -194,38 +115,54 @@ export default function MagicCube4DSettingsSheet({
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
-          <Text style={styles.title}>4D Settings</Text>
+          <Text style={styles.title}>3D Settings</Text>
           <Pressable style={styles.resetButton} onPress={onReset}>
             <Text style={styles.resetButtonText}>Reset</Text>
           </Pressable>
         </View>
-        {SECTIONS.map(section => (
-          <View key={section.title} style={styles.section}>
-            <Text style={styles.sectionTitle}>{section.title}</Text>
-            {section.items.map(spec => (
-              <View key={spec.key} style={styles.settingRow}>
-                <View style={styles.settingMeta}>
-                  <Text style={styles.settingLabel}>{spec.label}</Text>
-                  <Text style={styles.settingValue}>{spec.format(settings[spec.key])}</Text>
-                </View>
-                <View style={styles.stepper}>
-                  <Pressable
-                    style={styles.stepperButton}
-                    onPress={() => updateSetting(spec, -spec.step)}
-                  >
-                    <Ionicons name="remove" size={18} color="#f5f7ff" />
-                  </Pressable>
-                  <Pressable
-                    style={styles.stepperButton}
-                    onPress={() => updateSetting(spec, spec.step)}
-                  >
-                    <Ionicons name="add" size={18} color="#f5f7ff" />
-                  </Pressable>
-                </View>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>View</Text>
+          {VIEW_SETTINGS.map(spec => (
+            <View key={spec.key} style={styles.settingRow}>
+              <View style={styles.settingMeta}>
+                <Text style={styles.settingLabel}>{spec.label}</Text>
+                <Text style={styles.settingValue}>{spec.format(settings[spec.key])}</Text>
               </View>
-            ))}
+              <View style={styles.stepper}>
+                <Pressable
+                  style={styles.stepperButton}
+                  onPress={() => updateSetting(spec, -spec.step)}
+                >
+                  <Ionicons name="remove" size={18} color="#f5f7ff" />
+                </Pressable>
+                <Pressable
+                  style={styles.stepperButton}
+                  onPress={() => updateSetting(spec, spec.step)}
+                >
+                  <Ionicons name="add" size={18} color="#f5f7ff" />
+                </Pressable>
+              </View>
+            </View>
+          ))}
+        </View>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Cross color</Text>
+          <View style={styles.facePickerRow}>
+            {ALL_FACES.map(face => {
+              const bg = FACE_COLORS[face];
+              const isActive = crossFace === face;
+              return (
+                <Pressable
+                  key={face}
+                  onPress={() => onCrossFaceChange(face)}
+                  style={[styles.faceSwatch, isActive && styles.faceSwatchActive]}
+                >
+                  <View style={[styles.faceSwatchInner, { backgroundColor: bg }]} />
+                </Pressable>
+              );
+            })}
           </View>
-        ))}
+        </View>
       </BottomSheetScrollView>
     </BottomSheetModal>
   );
@@ -278,7 +215,7 @@ const styles = StyleSheet.create({
   contentInner: {
     paddingHorizontal: 18,
     paddingVertical: 16,
-    gap: 18,
+    gap: 20,
   },
   section: {
     gap: 10,
@@ -289,6 +226,27 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.8,
     textTransform: 'uppercase',
+  },
+  facePickerRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  faceSwatch: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  faceSwatchActive: {
+    borderColor: '#f5f7ff',
+  },
+  faceSwatchInner: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
   },
   settingRow: {
     flexDirection: 'row',

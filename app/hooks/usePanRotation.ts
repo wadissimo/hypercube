@@ -2,16 +2,15 @@ import { useRef, useReducer } from 'react';
 import { Gesture } from 'react-native-gesture-handler';
 import type { Mat3 } from '../utils/math3d';
 import { mulMat, rotX, rotY } from '../utils/math3d';
+import { createDefaultCubeViewMatrix } from './useCubeGesture';
 
 const SENSITIVITY = 0.006;
-const INITIAL_RX = Math.PI / 5.5;
-const INITIAL_RY = -Math.PI / 5;
 const INITIAL_ZOOM = 1;
 const MIN_ZOOM = 0.65;
 const MAX_ZOOM = 1.9;
 
 export function usePanRotation() {
-  const viewMatrix = useRef<Mat3>(mulMat(rotX(INITIAL_RX), rotY(INITIAL_RY)));
+  const viewMatrix = useRef<Mat3>(createDefaultCubeViewMatrix());
   const prevTranslation = useRef<[number, number]>([0, 0]);
   const zoom = useRef(INITIAL_ZOOM);
   const pinchStartZoom = useRef(INITIAL_ZOOM);

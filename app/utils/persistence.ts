@@ -2,6 +2,7 @@ import { File, Paths } from 'expo-file-system';
 import type { CubeSize, CubeState, Face } from './cubeModel';
 import type { CubeTimerHistoryEntry, CubeTimerSession } from './cubeTimer';
 import { createDefaultCubeTimerSession } from './cubeTimer';
+import type { CubeViewSettings } from './cubeViewSettings';
 import type { MagicCube4DSettings } from './magiccube4dSettings';
 import type { Mat3 } from './math3d';
 import type { Mat4 } from './math4d';
@@ -13,6 +14,7 @@ export type PersistedHypercubeRotationMode = '4d' | '3d' | null;
 export interface PersistedCubeSession {
   cubeState: CubeState;
   scrambleText: string;
+  solveCheckArmed?: boolean;
   rotationMode: boolean;
   sliceMask: number;
   viewMatrix: Mat3;
@@ -23,6 +25,7 @@ export interface PersistedCubeSession {
 export interface PersistedHypercubeSession {
   state: number[];
   sliceMask: number;
+  solveCheckArmed?: boolean;
   rotation4d: Mat4;
   settings: MagicCube4DSettings;
   savedViewMatrix: Mat3 | null;
@@ -37,7 +40,10 @@ export interface PersistedAppState {
   mode: PersistedScreenMode;
   cubeSize: CubeSize;
   cubes: Record<PersistedCubeKey, PersistedCubeSession>;
+  cubeViewSettings?: CubeViewSettings;
+  savedCubeViewMatrix?: Mat3 | null;
   hypercube: PersistedHypercubeSession;
+  crossFace?: Face;
 }
 
 const AUTOSAVE_FILE = new File(Paths.cache, 'hypercube-session-autosave.json');
@@ -101,6 +107,18 @@ function isPersistedAppState(value: unknown): value is PersistedAppState {
     return false;
   }
 
+  if (value.cubeViewSettings !== undefined && !isCubeViewSettings(value.cubeViewSettings)) {
+    return false;
+  }
+
+  if (value.savedCubeViewMatrix !== undefined && value.savedCubeViewMatrix !== null && !isMat3(value.savedCubeViewMatrix)) {
+    return false;
+  }
+
+  if (value.crossFace !== undefined && !VALID_FACES.includes(value.crossFace as Face)) {
+    return false;
+  }
+
   return CUBE_KEYS.every(key => isPersistedCubeSession(value.cubes[key]));
 }
 
@@ -108,6 +126,7 @@ function isPersistedCubeSession(value: unknown): value is PersistedCubeSession {
   return isRecord(value)
     && isCubeState(value.cubeState)
     && typeof value.scrambleText === 'string'
+    && (value.solveCheckArmed === undefined || typeof value.solveCheckArmed === 'boolean')
     && typeof value.rotationMode === 'boolean'
     && isFiniteNumber(value.sliceMask)
     && isMat3(value.viewMatrix)
@@ -121,6 +140,7 @@ export function normalizePersistedCubeSession(
   const timer = session.timer ?? createDefaultCubeTimerSession();
   return {
     ...session,
+    solveCheckArmed: session.solveCheckArmed ?? false,
     timer: timer.status === 'running'
       ? {
         ...timer,
@@ -137,6 +157,7 @@ export function normalizePersistedHypercubeSession(
   const timer = session.timer ?? createDefaultCubeTimerSession();
   return {
     ...session,
+    solveCheckArmed: session.solveCheckArmed ?? false,
     timer: timer.status === 'running'
       ? {
         ...timer,
@@ -151,6 +172,7 @@ function isPersistedHypercubeSession(value: unknown): value is PersistedHypercub
   return isRecord(value)
     && isNumberArray(value.state)
     && isFiniteNumber(value.sliceMask)
+    && (value.solveCheckArmed === undefined || typeof value.solveCheckArmed === 'boolean')
     && isMat4(value.rotation4d)
     && isMagicCube4DSettings(value.settings)
     && (value.savedViewMatrix === null || isMat3(value.savedViewMatrix))
@@ -172,6 +194,13 @@ function isMagicCube4DSettings(value: unknown): value is MagicCube4DSettings {
     && isFiniteNumber(value.faceSpacing)
     && isFiniteNumber(value.stickerSpacing)
     && isFiniteNumber(value.shadowLight);
+}
+
+function isCubeViewSettings(value: unknown): value is CubeViewSettings {
+  return isRecord(value)
+    && isFiniteNumber(value.viewPitchDeg)
+    && isFiniteNumber(value.viewYawDeg)
+    && isFiniteNumber(value.viewRollDeg);
 }
 
 function isCubeTimerSession(value: unknown): value is CubeTimerSession {

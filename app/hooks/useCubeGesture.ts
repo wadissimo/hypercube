@@ -4,12 +4,11 @@ import type { Mat3 } from '../utils/math3d';
 import { cloneMat3, mulMat, rotX, rotY, rotZ } from '../utils/math3d';
 import type { CubeSize, CubeState, Face } from '../utils/cubeModel';
 import { buildSwipeLayers, twistRotationMatrix } from '../utils/cubeModel';
+import { createCubeViewMatrix, DEFAULT_CUBE_VIEW_SETTINGS } from '../utils/cubeViewSettings';
 import { hitTestSticker, swipeToMove, tapToMove } from '../utils/cubeInteraction';
 import type { StickerHit } from '../utils/cubeInteraction';
 
 const SENSITIVITY = 0.006;
-const INITIAL_RX = Math.PI / 5.5;
-const INITIAL_RY = -Math.PI / 5;
 const INITIAL_ZOOM = 1;
 const MIN_ZOOM = 0.65;
 const MAX_ZOOM = 1.9;
@@ -19,7 +18,7 @@ const LONG_PRESS_MS = 300;
 export const INITIAL_CUBE_ZOOM = 1;
 
 export function createDefaultCubeViewMatrix(): Mat3 {
-  return mulMat(rotX(INITIAL_RX), rotY(INITIAL_RY));
+  return createCubeViewMatrix(DEFAULT_CUBE_VIEW_SETTINGS);
 }
 
 function clamp(value: number, min: number, max: number): number {
