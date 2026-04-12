@@ -63,6 +63,11 @@ export interface MagicCube4DFaceAxisOption {
   oppositeGripIndex: number;
 }
 
+export interface MagicCube4DRotationStep {
+  axisIndex: 0 | 1 | 2;
+  dir: -1 | 1;
+}
+
 const DATA = MAGICCUBE4D_HYPERCUBE_DATA;
 const SCALE_4D = 1 / DATA.circumRadius;
 const EPSILON = 1e-6;
@@ -97,6 +102,8 @@ const faceCenterStickerMap = buildFaceCenterStickerMap();
 const twistDestinationCache = new Map<string, number[]>();
 const cubeRotationDestinationCache = new Map<string, number[]>();
 const spatialRotationDestinationCache = new Map<string, number[]>();
+const cubeRotationFacePermutationCache = new Map<string, number[]>();
+const faceCenteringRotationCache = new Map<number, MagicCube4DRotationStep[]>();
 const stickerGripMap = buildStickerGripMap();
 const faceTwistStickerMap = buildFaceTwistStickerMap();
 const faceTwistAxisMap = buildFaceTwistAxisMap();
@@ -390,6 +397,62 @@ export function createRotateFaceToCenterMatrix(currentView: Mat4, faceIndex: num
   return mulRowMat4(currentView, makeRowRotMatThatSlerps(faceOnScreen, minusW, t));
 }
 
+export function getFaceCenteringRotationSteps(faceIndex: number): readonly MagicCube4DRotationStep[] {
+  const cached = faceCenteringRotationCache.get(faceIndex);
+  if (cached) {
+    return cached;
+  }
+
+  const targetPermutation = getFaceCenteringPermutation(faceIndex);
+  const identityPermutation = DATA.faceCenters.map((_, index) => index);
+  if (permutationsEqual(targetPermutation, identityPermutation)) {
+    faceCenteringRotationCache.set(faceIndex, []);
+    return [];
+  }
+
+  const stepOptions: MagicCube4DRotationStep[] = [
+    { axisIndex: 0, dir: 1 },
+    { axisIndex: 0, dir: -1 },
+    { axisIndex: 1, dir: 1 },
+    { axisIndex: 1, dir: -1 },
+    { axisIndex: 2, dir: 1 },
+    { axisIndex: 2, dir: -1 },
+  ];
+  const queue: { permutation: number[]; steps: MagicCube4DRotationStep[] }[] = [
+    { permutation: identityPermutation, steps: [] },
+  ];
+  const seen = new Set([identityPermutation.join(',')]);
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      break;
+    }
+
+    for (const step of stepOptions) {
+      const nextPermutation = composeFacePermutation(
+        getCubeRotationFacePermutation(step.axisIndex, step.dir),
+        current.permutation,
+      );
+      const key = nextPermutation.join(',');
+      if (seen.has(key)) {
+        continue;
+      }
+
+      const nextSteps = [...current.steps, step];
+      if (permutationsEqual(nextPermutation, targetPermutation)) {
+        faceCenteringRotationCache.set(faceIndex, nextSteps);
+        return nextSteps;
+      }
+
+      seen.add(key);
+      queue.push({ permutation: nextPermutation, steps: nextSteps });
+    }
+  }
+
+  throw new Error(`Unable to derive centering rotation for face ${faceIndex}`);
+}
+
 function getClosestGrip(pickCoords: Vec4, faceIndex: number, stickerIndex: number): number {
   const cubie = DATA.sticker2Cubie[stickerIndex];
   const numColors = numColorsByCubie.get(cubie) ?? 1;
@@ -414,6 +477,59 @@ function getClosestGrip(pickCoords: Vec4, faceIndex: number, stickerIndex: numbe
   }
 
   return bestGrip;
+}
+
+function getFaceCenteringPermutation(faceIndex: number): number[] {
+  const centerMatrix = createRotateFaceToCenterMatrix(identity4(), faceIndex, 1);
+  if (!centerMatrix) {
+    return DATA.faceCenters.map((_, index) => index);
+  }
+
+  return DATA.faceCenters.map(center => (
+    findClosestFaceIndex(mulRowVec4(center as Vec4, centerMatrix))
+  ));
+}
+
+function getCubeRotationFacePermutation(axisIndex: 0 | 1 | 2, dir: -1 | 1): number[] {
+  const key = `${axisIndex}:${dir}`;
+  const cached = cubeRotationFacePermutationCache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const rotation = buildRotationForAxis(axisIndex, dir * (Math.PI / 2));
+  const permutation = DATA.faceCenters.map(center => (
+    findClosestFaceIndex(mulRowVec4(center as Vec4, rotation))
+  ));
+  cubeRotationFacePermutationCache.set(key, permutation);
+  return permutation;
+}
+
+function composeFacePermutation(outer: number[], inner: number[]): number[] {
+  return inner.map(faceIndex => outer[faceIndex]);
+}
+
+function permutationsEqual(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function findClosestFaceIndex(target: Vec4): number {
+  let bestIndex = -1;
+  let bestDistance = Infinity;
+
+  for (let faceIndex = 0; faceIndex < DATA.faceCenters.length; faceIndex++) {
+    const distance = distanceSquared(target, DATA.faceCenters[faceIndex] as Vec4);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = faceIndex;
+    }
+  }
+
+  if (bestIndex < 0 || bestDistance > 1e-6) {
+    throw new Error(`Missing face destination; nearest distance ${bestDistance}`);
+  }
+
+  return bestIndex;
 }
 
 function getClosestTwistGrip(pickCoords: Vec4, faceIndex: number, stickerIndex: number): number {

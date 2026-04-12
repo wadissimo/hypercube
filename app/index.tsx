@@ -689,9 +689,9 @@ export default function Index() {
   const handleHypercubeDoubleTap = useCallback((point: [number, number]) => {
     const pickInfo = magicCube4DPickRef.current(point[0], point[1]);
     if (pickInfo) {
-      select4DFace(pickInfo.faceIndex);
+      select4DFace(0);
     }
-    rotateFaceToCenter(pickInfo?.stickerIndex ?? null);
+    rotateFaceToCenter(pickInfo?.faceIndex ?? null);
   }, [rotateFaceToCenter, select4DFace]);
   const handleHypercubeTap = useCallback((point: [number, number]) => {
     const pickInfo = magicCube4DPickRef.current(point[0], point[1]);

@@ -4,10 +4,9 @@ import {
   applySpatialRotationToState,
   applyTwistToState,
   buildScrambledMagicCube4DState,
-  createRotateFaceToCenterMatrix,
   createSolvedMagicCube4DState,
+  getFaceCenteringRotationSteps,
   hasValidTwist,
-  getStickerFaceIndex,
   getStickerGripIndex,
   MAGICCUBE4D_INITIAL_VIEW,
   type MagicCube4DAnimation,
@@ -26,6 +25,11 @@ interface Params {
   animationDurationMs?: number;
   onStateCommit?: () => void;
 }
+
+type WholeCubeAnimation = Extract<
+  MagicCube4DAnimation,
+  { kind: 'cubeRotation' } | { kind: 'spatialRotation' }
+>;
 
 export function useMagicCube4D({
   twistDurationMs = 260,
@@ -81,37 +85,45 @@ export function useMagicCube4D({
     setCanUndo(historyRef.current.length > 0);
   }, []);
 
-  const rotateFaceToCenter = useCallback((stickerIndex: number | null) => {
-    if (stickerIndex == null || viewFrameRef.current || twistFrameRef.current) {
-      return;
-    }
-
-    const faceIndex = getStickerFaceIndex(stickerIndex);
-    const startView = baseView;
-    const endView = createRotateFaceToCenterMatrix(startView, faceIndex, 1);
-    if (!endView) {
+  const runWholeCubeRotation = useCallback((
+    animation: WholeCubeAnimation,
+    applyRotation: (state: number[]) => number[],
+    onComplete?: () => void,
+  ) => {
+    if (viewFrameRef.current || twistFrameRef.current) {
       return;
     }
 
     const startedAt = Date.now();
     const tick = () => {
       const progress = Math.min((Date.now() - startedAt) / animationDurationMs, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      const nextView = createRotateFaceToCenterMatrix(startView, faceIndex, eased);
-      if (nextView) {
-        setBaseView(nextView);
-      }
+      const eased = 0.5 - Math.cos(progress * Math.PI) / 2;
+      setTwistAnimation({
+        ...animation,
+        progress: eased,
+      });
 
       if (progress < 1) {
-        viewFrameRef.current = requestAnimationFrame(tick);
+        twistFrameRef.current = requestAnimationFrame(tick);
       } else {
-        setBaseView(endView);
-        viewFrameRef.current = null;
+        setState(prev => {
+          historyRef.current.push(prev);
+          setCanUndo(true);
+          onStateCommit?.();
+          return applyRotation(prev);
+        });
+        setTwistAnimation(null);
+        twistFrameRef.current = null;
+        onComplete?.();
       }
     };
 
-    viewFrameRef.current = requestAnimationFrame(tick);
-  }, [animationDurationMs, baseView]);
+    setTwistAnimation({
+      ...animation,
+      progress: 0,
+    });
+    twistFrameRef.current = requestAnimationFrame(tick);
+  }, [animationDurationMs, onStateCommit]);
 
   const twistGrip = useCallback((gripIndex: number | null, dir: MagicCube4DTwistDirection) => {
     if (gripIndex == null || twistFrameRef.current || viewFrameRef.current) {
@@ -162,83 +174,51 @@ export function useMagicCube4D({
     twistGrip(stickerIndex == null ? null : getStickerGripIndex(stickerIndex), dir);
   }, [twistGrip]);
 
-  const rotateState = useCallback((axisIndex: 0 | 1 | 2, dir: -1 | 1) => {
-    if (viewFrameRef.current || twistFrameRef.current) {
+  const rotateFaceToCenter = useCallback((faceIndex: number | null) => {
+    if (faceIndex == null || viewFrameRef.current || twistFrameRef.current) {
       return;
     }
 
-    const startedAt = Date.now();
-    const tick = () => {
-      const progress = Math.min((Date.now() - startedAt) / animationDurationMs, 1);
-      const eased = 0.5 - Math.cos(progress * Math.PI) / 2;
-      setTwistAnimation({
-        kind: 'cubeRotation',
-        axisIndex,
-        dir,
-        progress: eased,
-      });
+    const steps = getFaceCenteringRotationSteps(faceIndex);
+    if (steps.length === 0) {
+      return;
+    }
 
-      if (progress < 1) {
-        twistFrameRef.current = requestAnimationFrame(tick);
-      } else {
-        setState(prev => {
-          historyRef.current.push(prev);
-          setCanUndo(true);
-          onStateCommit?.();
-          return applyCubeRotationToState(prev, axisIndex, dir);
-        });
-        setTwistAnimation(null);
-        twistFrameRef.current = null;
-      }
+    const runStep = (index: number) => {
+      const step = steps[index];
+      const animation: WholeCubeAnimation = {
+        kind: 'cubeRotation',
+        axisIndex: step.axisIndex,
+        dir: step.dir,
+        progress: 0,
+      };
+      runWholeCubeRotation(
+        animation,
+        prev => applyCubeRotationToState(prev, step.axisIndex, step.dir),
+        index + 1 < steps.length ? () => runStep(index + 1) : undefined,
+      );
     };
 
-    setTwistAnimation({
+    runStep(0);
+  }, [runWholeCubeRotation]);
+
+  const rotateState = useCallback((axisIndex: 0 | 1 | 2, dir: -1 | 1) => {
+    runWholeCubeRotation({
       kind: 'cubeRotation',
       axisIndex,
       dir,
       progress: 0,
-    });
-    twistFrameRef.current = requestAnimationFrame(tick);
-  }, [animationDurationMs, onStateCommit]);
+    }, prev => applyCubeRotationToState(prev, axisIndex, dir));
+  }, [runWholeCubeRotation]);
 
   const rotateSpatialState = useCallback((axisIndex: 0 | 1 | 2, dir: -1 | 1) => {
-    if (viewFrameRef.current || twistFrameRef.current) {
-      return;
-    }
-
-    const startedAt = Date.now();
-    const tick = () => {
-      const progress = Math.min((Date.now() - startedAt) / animationDurationMs, 1);
-      const eased = 0.5 - Math.cos(progress * Math.PI) / 2;
-      setTwistAnimation({
-        kind: 'spatialRotation',
-        axisIndex,
-        dir,
-        progress: eased,
-      });
-
-      if (progress < 1) {
-        twistFrameRef.current = requestAnimationFrame(tick);
-      } else {
-        setState(prev => {
-          historyRef.current.push(prev);
-          setCanUndo(true);
-          onStateCommit?.();
-          return applySpatialRotationToState(prev, axisIndex, dir);
-        });
-        setTwistAnimation(null);
-        twistFrameRef.current = null;
-      }
-    };
-
-    setTwistAnimation({
+    runWholeCubeRotation({
       kind: 'spatialRotation',
       axisIndex,
       dir,
       progress: 0,
-    });
-    twistFrameRef.current = requestAnimationFrame(tick);
-  }, [animationDurationMs, onStateCommit]);
+    }, prev => applySpatialRotationToState(prev, axisIndex, dir));
+  }, [runWholeCubeRotation]);
 
   const restoreSession = useCallback((session: MagicCube4DSessionSnapshot) => {
     if (viewFrameRef.current || twistFrameRef.current) {
