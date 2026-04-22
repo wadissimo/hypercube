@@ -403,7 +403,7 @@ export function getFaceCenteringRotationSteps(faceIndex: number): readonly Magic
     return cached;
   }
 
-  const targetPermutation = getFaceCenteringPermutation(faceIndex);
+  const targetPermutation = getFaceCenteringPermutationInternal(faceIndex);
   const identityPermutation = DATA.faceCenters.map((_, index) => index);
   if (permutationsEqual(targetPermutation, identityPermutation)) {
     faceCenteringRotationCache.set(faceIndex, []);
@@ -453,6 +453,10 @@ export function getFaceCenteringRotationSteps(faceIndex: number): readonly Magic
   throw new Error(`Unable to derive centering rotation for face ${faceIndex}`);
 }
 
+export function getFaceCenteringPermutation(faceIndex: number): readonly number[] {
+  return [...getFaceCenteringPermutationInternal(faceIndex)];
+}
+
 function getClosestGrip(pickCoords: Vec4, faceIndex: number, stickerIndex: number): number {
   const cubie = DATA.sticker2Cubie[stickerIndex];
   const numColors = numColorsByCubie.get(cubie) ?? 1;
@@ -479,7 +483,7 @@ function getClosestGrip(pickCoords: Vec4, faceIndex: number, stickerIndex: numbe
   return bestGrip;
 }
 
-function getFaceCenteringPermutation(faceIndex: number): number[] {
+function getFaceCenteringPermutationInternal(faceIndex: number): number[] {
   const centerMatrix = createRotateFaceToCenterMatrix(identity4(), faceIndex, 1);
   if (!centerMatrix) {
     return DATA.faceCenters.map((_, index) => index);

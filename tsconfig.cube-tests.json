@@ -14,6 +14,7 @@
     "app/utils/cubeModel.ts",
     "app/utils/cubeControls.ts",
     "app/utils/cubeNotation.ts",
+    "app/utils/hypercubeControls.ts",
     "app/utils/math3d.ts",
     "app/utils/math4d.ts",
     "app/utils/cubeGeometry.ts",
@@ -23,6 +24,7 @@
     "app/utils/puzzleTopology.ts",
     "tests/cube/cubeModel.test.ts",
     "tests/cube/cubeControls.test.ts",
+    "tests/cube/hypercubeControls.test.ts",
     "tests/cube/cubeNotation.test.ts",
     "tests/cube/puzzleSolved.test.ts",
     "tests/cube/puzzleSolvedWorkflow.test.ts"

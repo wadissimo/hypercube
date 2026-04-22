@@ -33,6 +33,13 @@ import { useTwistAnimation } from './hooks/useTwistAnimation';
 import { resolve3DNotationMove } from './utils/cubeNotation';
 import { resolveScreenRelativeMapping } from './utils/cubeControls';
 import {
+  HYPERCUBE_SCREEN_SLOT_GRID_ROWS,
+  HYPERCUBE_SCREEN_SLOT_LABELS,
+  invert4DScreenRelativeFaceMapping,
+  resolve4DScreenRelativeFaceMapping,
+} from './utils/hypercubeControls';
+import {
+  createRotateFaceToCenterMatrix,
   getFaceCenter,
   getFaceCenterStickerIndex,
   isMagicCube4DSolved,
@@ -44,7 +51,6 @@ import {
   type MagicCube4DTwistDirection,
   MAGICCUBE4D_DEFAULT_SLICE_MASK,
   MAGICCUBE4D_FACE_COLORS,
-  MAGICCUBE4D_FACE_LABELS,
   MAGICCUBE4D_SLICE_BITS,
   MAGICCUBE4D_SLICE_LABELS,
 } from './utils/magiccube4d';
@@ -53,7 +59,6 @@ import {
   DEFAULT_MAGICCUBE4D_SETTINGS,
   type HypercubeGestureAction,
 } from './utils/magiccube4dSettings';
-import { MAGICCUBE4D_HYPERCUBE_DATA } from './utils/magiccube4dData';
 import { cloneMat3, mulVec, type Mat3 } from './utils/math3d';
 import { cloneMat4 } from './utils/math4d';
 import { resolveSolveCheckTransition } from './utils/puzzleSolved';
@@ -84,32 +89,22 @@ import {
 } from './utils/cubeViewSettings';
 
 const SCRAMBLE_MOVES = 20;
-const GRIP_FACE_GRID_ROWS = [
-  [6, 4, 5],
-  [7, null, 0],
-  [2, 3, 1],
-] as const;
-const GRIP_FACE_BUTTON_LABELS: Record<number, string> = {
-  0: 'I',
-  1: 'R',
-  2: 'F',
-  3: 'D',
-  4: 'U',
-  5: 'B',
-  6: 'L',
-  7: 'O',
-};
 const GLOBAL_4D_AXIS_OPTIONS = [
   { axisIndex: 0 },
   { axisIndex: 1 },
   { axisIndex: 2 },
 ] as const;
 const ROTATION_ROW_LABELS = ['X', 'Y', 'Z'] as const;
-const MAGICCUBE4D_SCALE_4D = 1 / MAGICCUBE4D_HYPERCUBE_DATA.circumRadius;
-const MAGICCUBE4D_EYE_W = MAGICCUBE4D_HYPERCUBE_DATA.eyeW;
-const AXIS_SAMPLE_OFFSET = 0.2;
+const MAGICCUBE4D_SCALE_4D = 1 / 2;
+const MAGICCUBE4D_EYE_W = 1.05;
 const FACE_PROBE_OFFSETS = [0.24, 0.11, 0.17] as const;
 const TWIST_SAMPLE_FRACTION = 0.12;
+const IDENTITY_4D: readonly (readonly number[])[] = [
+  [1, 0, 0, 0],
+  [0, 1, 0, 0],
+  [0, 0, 1, 0],
+  [0, 0, 0, 1],
+] as const;
 
 type Displayed4DControlAction =
   | { kind: 'rotation'; axisIndex: 0 | 1 | 2; dir: -1 | 1 }
@@ -347,10 +342,9 @@ export default function Index() {
   const displayed4DControlRows = useMemo(
     () => buildDisplayed4DControlRows(
       selected4DFace,
-      rotation4d,
-      live4DViewMatrix,
+      base4DViewMatrix,
     ),
-    [live4DViewMatrix, rotation4d, selected4DFace],
+    [base4DViewMatrix, selected4DFace],
   );
   const current4DFaceColors = useMemo(
     () => MAGICCUBE4D_FACE_COLORS.map((_, faceIndex) => {
@@ -360,6 +354,27 @@ export default function Index() {
     }),
     [magicCube4DState],
   );
+  const screenRelative4DFaceMapping = useMemo(
+    () => resolve4DScreenRelativeFaceMapping(rotation4d, live4DViewMatrix, base4DViewMatrix),
+    [base4DViewMatrix, live4DViewMatrix, rotation4d],
+  );
+  const screenRelative4DFaceInverseMapping = useMemo(
+    () => invert4DScreenRelativeFaceMapping(screenRelative4DFaceMapping),
+    [screenRelative4DFaceMapping],
+  );
+  const displayed4DFaceChips = useMemo(
+    () => screenRelative4DFaceMapping.map((physicalFaceIndex, slotFaceIndex) => ({
+      slotFaceIndex,
+      physicalFaceIndex,
+      color: current4DFaceColors[physicalFaceIndex],
+    })),
+    [current4DFaceColors, screenRelative4DFaceMapping],
+  );
+  const selected4DFaceSlot = selected4DFace == null
+    ? null
+    : (screenRelative4DFaceInverseMapping[selected4DFace] ?? -1) >= 0
+      ? screenRelative4DFaceInverseMapping[selected4DFace]
+      : null;
   const selected4DFaceColor = selected4DFace == null ? null : current4DFaceColors[selected4DFace];
   useEffect(() => {
     const transition = resolveSolveCheckTransition(cubeSolveCheckArmed, isCubeSolved(cubeState));
@@ -1303,25 +1318,30 @@ export default function Index() {
                 <View style={styles.bottomControlSplit}>
                   <View style={[styles.controlPanel, styles.faceControlPanel]}>
                     <View style={styles.facePickerGrid}>
-                      {GRIP_FACE_GRID_ROWS.map((row, rowIndex) => (
+                      {HYPERCUBE_SCREEN_SLOT_GRID_ROWS.map((row, rowIndex) => (
                         <View key={`grip-row-${rowIndex}`} style={styles.faceChipRow}>
-                          {row.map((faceIndex, colIndex) => (
-                            faceIndex == null ? (
+                          {row.map((slotFaceIndex, colIndex) => (
+                            slotFaceIndex == null ? (
                               <View key={`empty-${rowIndex}-${colIndex}`} style={styles.faceChipPlaceholder} />
                             ) : (
                               <Pressable
-                                key={MAGICCUBE4D_FACE_LABELS[faceIndex]}
+                                key={`face-slot-${slotFaceIndex}`}
                                 style={({ pressed }) => [
                                   styles.faceChip,
-                                  { backgroundColor: current4DFaceColors[faceIndex] },
-                                  selected4DFace === faceIndex && styles.faceChipActive,
+                                  { backgroundColor: displayed4DFaceChips[slotFaceIndex].color },
+                                  selected4DFaceSlot === slotFaceIndex && styles.faceChipActive,
                                   pressed && !magicCube4DAnimating && styles.faceChipPressed,
                                 ]}
-                                onPress={() => toggle4DFace(faceIndex)}
+                                onPress={() => toggle4DFace(displayed4DFaceChips[slotFaceIndex].physicalFaceIndex)}
                                 disabled={magicCube4DAnimating}
                               >
-                                <Text style={[styles.faceChipText, { color: getButtonTextColor(current4DFaceColors[faceIndex]) }]}>
-                                  {GRIP_FACE_BUTTON_LABELS[faceIndex]}
+                                <Text
+                                  style={[
+                                    styles.faceChipText,
+                                    { color: getButtonTextColor(displayed4DFaceChips[slotFaceIndex].color) },
+                                  ]}
+                                >
+                                  {HYPERCUBE_SCREEN_SLOT_LABELS[slotFaceIndex]}
                                 </Text>
                               </Pressable>
                             )
@@ -1545,8 +1565,7 @@ function formatCubeSliceMask(sliceMask: number, cubeSize: CubeSize): string {
 
 function buildDisplayed4DControlRows(
   selected4DFace: number | null,
-  rotation4d: readonly (readonly number[])[],
-  viewMatrix: Mat3,
+  defaultViewMatrix: Mat3,
 ): Displayed4DControlRow[] {
   if (selected4DFace == null) {
     return GLOBAL_4D_AXIS_OPTIONS.map(option => ({
@@ -1557,14 +1576,17 @@ function buildDisplayed4DControlRows(
     }));
   }
 
+  const centeringMatrix = createRotateFaceToCenterMatrix(IDENTITY_4D as never, selected4DFace, 1)
+    ?? (IDENTITY_4D as never);
   const faceCenter = getFaceCenter(selected4DFace);
   const faceAxisOptions = [...getFaceTwistAxisOptions(selected4DFace)];
   const probePoint = buildFaceProbePoint(faceCenter, faceAxisOptions.map(option => option.axisIndex));
-  const globalAxisRows = buildGlobalAxisRows(rotation4d, viewMatrix, probePoint);
+  const canonicalProbePoint = mulRowVec4(probePoint, centeringMatrix as never);
+  const globalAxisRows = buildCanonicalGlobalAxisRows(canonicalProbePoint, centeringMatrix as never, defaultViewMatrix);
   const localCandidates = faceAxisOptions.map(option => ({
     option,
-    positiveMotion: getLocalTurnMotionVector(option.gripIndex, 1, probePoint, rotation4d, viewMatrix),
-    negativeMotion: getLocalTurnMotionVector(option.oppositeGripIndex, 1, probePoint, rotation4d, viewMatrix),
+    positiveMotion: getCanonicalLocalTurnMotionVector(option.gripIndex, 1, canonicalProbePoint, centeringMatrix as never, defaultViewMatrix),
+    negativeMotion: getCanonicalLocalTurnMotionVector(option.oppositeGripIndex, 1, canonicalProbePoint, centeringMatrix as never, defaultViewMatrix),
   }));
 
   const remaining = [...localCandidates];
@@ -1595,10 +1617,10 @@ function buildDisplayed4DControlRows(
   return rows;
 }
 
-function buildGlobalAxisRows(
-  rotation4d: readonly (readonly number[])[],
-  viewMatrix: Mat3,
-  probePoint: readonly number[],
+function buildCanonicalGlobalAxisRows(
+  canonicalProbePoint: readonly number[],
+  canonicalRotation4d: readonly (readonly number[])[],
+  defaultViewMatrix: Mat3,
 ): {
   axisIndex: 0 | 1 | 2;
   slotLabel: 'U' | 'R' | 'F';
@@ -1606,8 +1628,8 @@ function buildGlobalAxisRows(
 }[] {
   const globalAxes = GLOBAL_4D_AXIS_OPTIONS.map(option => ({
     axisIndex: option.axisIndex,
-    viewVector: getGlobalAxisViewVector(option.axisIndex, rotation4d, viewMatrix),
-    positiveMotion: getGlobalRotationMotionVector(option.axisIndex, 1, probePoint, rotation4d, viewMatrix),
+    viewVector: getCanonicalAxisViewVector(option.axisIndex, canonicalRotation4d, defaultViewMatrix),
+    positiveMotion: getCanonicalGlobalRotationMotionVector(option.axisIndex, 1, canonicalProbePoint, canonicalRotation4d, defaultViewMatrix),
   }));
   const remaining = [...globalAxes];
   const rows: {
@@ -1620,24 +1642,24 @@ function buildGlobalAxisRows(
   rows.push({ axisIndex: remaining[uIndex].axisIndex, slotLabel: 'U', positiveMotion: remaining[uIndex].positiveMotion });
   remaining.splice(uIndex, 1);
 
-  const rIndex = remaining.length === 1 ? 0 : findBestViewAlignmentIndex(remaining, 0);
-  rows.push({ axisIndex: remaining[rIndex].axisIndex, slotLabel: 'F', positiveMotion: remaining[rIndex].positiveMotion });
-  remaining.splice(rIndex, 1);
+  const fIndex = remaining.length === 1 ? 0 : findBestViewAlignmentIndex(remaining, 0);
+  rows.push({ axisIndex: remaining[fIndex].axisIndex, slotLabel: 'F', positiveMotion: remaining[fIndex].positiveMotion });
+  remaining.splice(fIndex, 1);
 
   rows.push({ axisIndex: remaining[0].axisIndex, slotLabel: 'R', positiveMotion: remaining[0].positiveMotion });
   return rows;
 }
 
-function getGlobalAxisViewVector(
+function getCanonicalAxisViewVector(
   axisIndex: number,
-  rotation4d: readonly (readonly number[])[],
-  viewMatrix: Mat3,
+  canonicalRotation4d: readonly (readonly number[])[],
+  defaultViewMatrix: Mat3,
 ): [number, number, number] {
-  const positivePoint = offsetPoint4([0, 0, 0, 0], axisIndex, AXIS_SAMPLE_OFFSET);
-  const negativePoint = offsetPoint4([0, 0, 0, 0], axisIndex, -AXIS_SAMPLE_OFFSET);
+  const positivePoint = offsetPoint4([0, 0, 0, 0], axisIndex, 0.2);
+  const negativePoint = offsetPoint4([0, 0, 0, 0], axisIndex, -0.2);
   return subtract3(
-    projectPointToView(positivePoint, rotation4d, viewMatrix),
-    projectPointToView(negativePoint, rotation4d, viewMatrix),
+    projectPointToView(positivePoint, canonicalRotation4d, defaultViewMatrix),
+    projectPointToView(negativePoint, canonicalRotation4d, defaultViewMatrix),
   );
 }
 
@@ -1668,31 +1690,31 @@ function buildFaceProbePoint(
   return point;
 }
 
-function getGlobalRotationMotionVector(
+function getCanonicalGlobalRotationMotionVector(
   axisIndex: 0 | 1 | 2,
   buttonDir: -1 | 1,
-  probePoint: readonly number[],
-  rotation4d: readonly (readonly number[])[],
-  viewMatrix: Mat3,
+  canonicalProbePoint: readonly number[],
+  canonicalRotation4d: readonly (readonly number[])[],
+  defaultViewMatrix: Mat3,
 ): [number, number, number] {
   const rotation = getSpatialRotationMatrix(axisIndex, (-buttonDir * Math.PI / 2) * TWIST_SAMPLE_FRACTION);
   return subtract3(
-    projectPointToView(mulRowVec4(probePoint as [number, number, number, number], rotation), rotation4d, viewMatrix),
-    projectPointToView(probePoint, rotation4d, viewMatrix),
+    projectPointToView(mulRowVec4(canonicalProbePoint as [number, number, number, number], rotation), canonicalRotation4d as never, defaultViewMatrix),
+    projectPointToView(canonicalProbePoint, canonicalRotation4d, defaultViewMatrix),
   );
 }
 
-function getLocalTurnMotionVector(
+function getCanonicalLocalTurnMotionVector(
   gripIndex: number,
   dir: MagicCube4DTwistDirection,
-  probePoint: readonly number[],
-  rotation4d: readonly (readonly number[])[],
-  viewMatrix: Mat3,
+  canonicalProbePoint: readonly number[],
+  canonicalRotation4d: readonly (readonly number[])[],
+  defaultViewMatrix: Mat3,
 ): [number, number, number] {
   const twistMatrix = getGripTwistMatrix(gripIndex, dir, TWIST_SAMPLE_FRACTION);
   return subtract3(
-    projectPointToView(mulRowVec4(probePoint as [number, number, number, number], twistMatrix), rotation4d, viewMatrix),
-    projectPointToView(probePoint, rotation4d, viewMatrix),
+    projectPointToView(mulRowVec4(canonicalProbePoint as [number, number, number, number], twistMatrix), canonicalRotation4d as never, defaultViewMatrix),
+    projectPointToView(canonicalProbePoint, canonicalRotation4d, defaultViewMatrix),
   );
 }
 
